@@ -618,6 +618,7 @@ class Segment:
         self.verts: Optional[List[int]] = None
         glist.add_segment(self)
         self.b1: Optional[mathutils.Vector] = None
+        self.b1_nurbs: Optional[mathutils.Vector] = None
 
     def add_quad(self, quad: "Quad | BigQuad"):
         self.quads.append(quad)
@@ -1527,6 +1528,245 @@ class Quad:
         ve = p2 - p1
         return ve
 
+    @staticmethod
+    def render_one_nurbs(points: List[List[mathutils.Vector]] ,context: bpy.types.Context, name: str):
+        # modified code from here https://blender.stackexchange.com/questions/7020/create-nurbs-surface-with-python
+        surface_data = bpy.data.curves.new(name, 'SURFACE')
+        surface_data.dimensions = '3D'
+
+        for row in points:
+            spline = surface_data.splines.new(type='NURBS')
+            spline.points.add(3)  # already has a default vector
+
+            for p, new_co in zip(spline.points, row):
+                p.co = (*new_co, 1.0)
+
+        surface_object = bpy.data.objects.new(f'{name}_NURBS_OBJ', surface_data)
+        context.collection.objects.link(surface_object)
+
+        splines = surface_object.data.splines
+        for s in splines:
+            for p in s.points:
+                p.select = True
+
+        context.view_layer.objects.active = surface_object
+        bpy.ops.object.mode_set(mode = 'EDIT') 
+        bpy.ops.curve.make_segment()
+        splines = surface_object.data.splines
+        for s in splines:
+            s.use_bezier_u = True
+            s.use_bezier_v = True
+            s.use_endpoint_u = True
+            s.use_endpoint_v = True
+        bpy.ops.object.mode_set(mode = 'OBJECT')
+        return surface_object
+
+    
+    def render_nurbs(self, context: bpy.types.Context, name: str) -> None:
+        self.calculate_coefs()
+        t = self.calculate_t()
+        c = self.calculate_c()
+        r = self.calculate_r()
+        s = Quad.calculate_s(t, c)
+        a = Quad.calculate_a(t, r, c)
+        l = self.calculate_l(t, c, s, a)
+        p = Quad.calculate_p(l, s, t)
+        q = Quad.calculate_q(p, s)
+        z = Quad.calculate_z(p, q)
+        n = Quad.calculate_n(s, q, p)
+        b = Quad.calculate_b(s, q, p)
+        objs: List[bpy.types.Object] = []
+        for j in range(2):
+            for k in range(2):
+                i = Quad.x(j, k)
+                j2 = Quad.x(j, i)
+                k2 = Quad.x(k, Quad.n(i))
+                nurbs_coords: List[List[mathutils.Vector]] = []
+                nurbs_coords.append([t[j][k], c[i][j][k], c[i][j2][k2], t[j2][k2]])
+                nurbs_coords.append([s[j][k], l[i][j][k], l[i][j2][k2], s[j2][k2]])
+                nurbs_coords.append([p[j][k], n[i][j][k], n[i][j2][k2], p[j2][k2]])
+                nurbs_coords.append([z[j][k], q[i][j][k], q[i][j2][k2], z[j2][k2]])
+                objs.append(Quad.render_one_nurbs(nurbs_coords, context, f"{name}{2*j + k}"))
+        nurbs_coords: List[List[mathutils.Vector]] = []
+        nurbs_coords.append([z[0][0], q[0][0][0], q[0][0][1], z[0][1]])
+        nurbs_coords.append([q[1][0][0], b[0][0], b[0][1], q[1][0][1]])
+        nurbs_coords.append([q[1][1][0], b[1][0], b[1][1], q[1][1][1]])
+        nurbs_coords.append([z[1][0], q[0][1][0], q[0][1][1], z[1][1]])
+        objs.append(Quad.render_one_nurbs(nurbs_coords, context, f"{name}4"))
+        return objs
+
+
+    def calculate_t(self):
+        return [el[0:4:3] for el in self.kk[0:4:3]]
+    
+    def calculate_c(self):
+        return [[el[1:3] for el in self.kk[0:4:3]],[el[0:4:3] for el in self.kk[1:3]]]
+        
+    def calculate_r(self):
+        r: List[List[List[mathutils.Vector]]] = [[]]
+        r[0].append(self.calculate_r_pair(0))
+        r[0].append(self.calculate_r_pair(2))
+        r2 = self.calculate_r_pair(3)
+        r3 = self.calculate_r_pair(1)
+        r.append([[r2[0], r3[0]], [r2[1], r3[1]]])
+        return r
+
+    def calculate_r_pair(self, i: int):
+        neighbour = self.get_neighbour_quad(i)
+        if neighbour is None:
+            if i == 0:
+                return [2*self.kk[0][0] - self.kk[1][0], 2*self.kk[0][3] - self.kk[1][3]]
+            if i == 1:
+                return [2*self.kk[0][3] - self.kk[0][2], 2*self.kk[3][3] - self.kk[3][2]]
+            if i == 2:
+                return [2*self.kk[3][0] - self.kk[2][0], 2*self.kk[3][3] - self.kk[2][3]]
+            if i == 3:
+                return [2*self.kk[0][0] - self.kk[0][1], 2*self.kk[3][0] - self.kk[3][1]]
+        else:
+            neighbour_i = neighbour.segments.index(self.segments[i])
+            bb0, bb2 = neighbour.extract_a0_a3(neighbour_i)
+            if self.directions[i] != neighbour.directions[neighbour_i]:
+                bb0, bb2 = bb2, bb0
+            if i == 0:
+                return [self.kk[0][0] + bb0, self.kk[0][3] + bb2]
+            if i == 1:
+                return [self.kk[0][3] + bb0, self.kk[3][3] + bb2]
+            if i == 2:
+                return [self.kk[3][0] + bb0, self.kk[3][3] + bb2]
+            if i == 3:
+                return [self.kk[0][0] + bb0, self.kk[3][0] + bb2]
+        raise ValueError("i not in range(4)")
+
+    @staticmethod
+    def calculate_s(t: List[List[mathutils.Vector]], c: List[List[List[mathutils.Vector]]]):
+        s = [[mathutils.Vector((0,0,0)) for _ in range(2)] for __ in range(2)]
+        for i in range(2):
+            for j in range(2):
+                s[i][j] = (t[i][j] + c[0][i][j] + c[1][i][j]) / 3
+        return s
+
+    @staticmethod
+    def calculate_a(t: List[List[mathutils.Vector]],
+                    r: List[List[List[mathutils.Vector]]],
+                    c: List[List[List[mathutils.Vector]]]):
+        a = [[[mathutils.Vector((0,0,0)) for _ in range(2)] for __ in range(2)] for ___ in range(2)]
+        for i in range(2):
+            for j in range(2):
+                for k in range(2):
+                    a[i][j][k] = (t[j][k] + r[i][j][k] + c[i][j][k]) / 3
+        return a
+    
+    def calculate_l(self,
+                t: List[List[mathutils.Vector]],
+                c: List[List[List[mathutils.Vector]]],
+                s: List[List[mathutils.Vector]],
+                a: List[List[List[mathutils.Vector]]]):
+        # Chiyocura's method
+        l = [[[mathutils.Vector((0,0,0)) for _ in range(2)] for __ in range(2)] for ___ in range(2)]
+        for j in range(2):
+            for k in range(2):
+                i = Quad.x(j, k)
+                js = (j, Quad.x(j, i))
+                ks = (k, Quad.x(k, Quad.n(i)))
+                bbs = [a[i][jj][kk] - t[jj][kk] for jj, kk in zip(js, ks)]
+                aas = [s[jj][kk] - t[jj][kk] for jj, kk in zip(js, ks)]
+                bs = [(bb - aa).normalized() for bb, aa in zip(bbs, aas)]
+                b1 = self.get_b1_nurbs(j, k, bs)
+                sss = [c[i][j][k] - t[j][k], t[js[1]][ks[1]] - c[i][js[1]][ks[1]]]
+                s1 = c[i][js[1]][ks[1]] - c[i][j][k]
+                kks, hhs = list(zip(*(get_coefs(bb, ss, aa) for aa, bb, ss in zip(aas, bs, sss))))
+                as_ch = [(2*kks[ii]*b1 + kks[Quad.n(ii)]*bs[ii] + 2*hhs[ii]*s1 + hhs[Quad.n(ii)]*sss[ii])/3 for ii in range(2)]
+                l[i][j][k] = c[i][j][k] + as_ch[0]
+                l[i][js[1]][ks[1]] = c[i][js[1]][ks[1]] + as_ch[1]
+        return l
+
+    def get_b1_nurbs(self, j: int, k: int, bs: List[mathutils.Vector]):
+        if j == 0:
+            if k == 0:
+                i = 0
+            else:
+                i = 1
+        else:
+            if k == 0:
+                i = 3
+            else:
+                i = 2
+        bb = self.segments[i].b1_nurbs
+        if bb is None:
+            res = 0.5 * (bs[0] + bs[1])
+            self.segments[i].b1_nurbs = res
+        else:
+            res = -1 * bb
+        return res
+    
+    @staticmethod
+    def calculate_p(l: List[List[List[mathutils.Vector]]],
+                    s: List[List[mathutils.Vector]],
+                    t: List[List[mathutils.Vector]]):
+        p = [[mathutils.Vector((0,0,0)) for _ in range(2)] for __ in range(2)]
+        for j in range(2):
+            for k in range(2):
+                p[j][k] = 1/6*(3*l[0][j][k] + 3*l[1][j][k] - s[j][k] + t[j][k])
+        return p
+    
+    @staticmethod
+    def calculate_q(p: List[List[mathutils.Vector]],
+                    s: List[List[mathutils.Vector]]):
+        q = [[[mathutils.Vector((0,0,0)) for _ in range(2)] for __ in range(2)] for ___ in range(2)]
+        for i in range(2):
+            for j in range(2):
+                for k in range(2):
+                    q[i][j][k] = 2*p[j][k] - s[j][k] + 1/5*(p[Quad.x(i, j)][Quad.x(Quad.n(i), k)] - p[j][k])
+        return q
+
+    @staticmethod
+    def calculate_z(p: List[List[mathutils.Vector]],
+                    q: List[List[List[mathutils.Vector]]]):
+        z = [[mathutils.Vector((0,0,0)) for _ in range(2)] for __ in range(2)]
+        for j in range(2):
+            for k in range(2):
+                z[j][k] = 1/3*(p[j][k] + q[0][j][k] + q[1][j][k])
+        return z
+    
+    @staticmethod
+    def calculate_n(s:List[List[mathutils.Vector]],
+                    q: List[List[List[mathutils.Vector]]],
+                    p: List[List[mathutils.Vector]]):
+        n = [[[mathutils.Vector((0,0,0)) for _ in range(2)] for __ in range(2)] for ___ in range(2)]
+        for i in range(2):
+            for j in range(2):
+                for k in range(2):
+                    n[i][j][k] = 1/3*(-1*s[j][k]
+                                      - q[i][Quad.x(i, j)][Quad.x(Quad.n(i), k)]
+                                      + q[Quad.n(i)][Quad.n(Quad.x(i, j))][Quad.x(i, k)]
+                                      + 3*p[j][k]
+                                      + 5*q[i][j][k]
+                                      - 4*q[Quad.n(i)][j][k])
+        return n
+
+    @staticmethod
+    def calculate_b(s:List[List[mathutils.Vector]],
+                    q: List[List[List[mathutils.Vector]]],
+                    p: List[List[mathutils.Vector]]):
+        b = [[mathutils.Vector((0,0,0)) for _ in range(2)] for __ in range(2)]
+        for j in range(2):
+            for k in range(2):
+                b[j][k] = 1/9*(3*s[j][k]
+                               - 3*q[0][Quad.x(0, j)][Quad.x(1, k)]
+                               - 3*q[1][Quad.x(1, j)][Quad.x(0, k)]
+                               - 10*p[j][k]
+                               + 11*q[0][j][k]
+                               + 11*q[1][j][k])
+        return b
+
+    @staticmethod
+    def n(inp: int):
+        return (inp + 1) % 2
+
+    @staticmethod
+    def x(inp1: int, inp2: int):
+        return (inp1 + inp2) % 2
+
 class GlobalList:
     def __init__(self):
         self.reduced_points: List[mathutils.Vector] = []
@@ -1674,7 +1914,7 @@ class GlobalList:
         for bq in self.big_quads:
             bq.subdivide(obj, self)
 
-    def render_mesh(self, d: "DependantsOfResolution|DependantsOfResolution_np", name: str, context):
+    def render_mesh(self, d: "DependantsOfResolution|DependantsOfResolution_np", name: str, context: bpy.types.Context):
         for bpoint in self.big_points:
             bpoint.add_vert(self)
         for segment in self.segments:
@@ -1686,6 +1926,13 @@ class GlobalList:
         obj = bpy.data.objects.new(name + "_GeneratedMesh", mesh)
         context.collection.objects.link(obj)
         return obj
+    
+    def render_nurbs(self, name: str, context: bpy.types.Context):
+        objs: List[bpy.types.Object] = []
+        for i, quad in enumerate(self.quads):
+            objs.extend(quad.render_nurbs(context, f"{name}_{i}_"))
+        return objs
+    
         
 
 
@@ -1697,11 +1944,11 @@ def copy_transforms(active: bpy.types.Object, new: bpy.types.Object):
 
 class CreateSurfacesBetweenCurves(bpy.types.Operator):
     """My Creating Surfaces Between Curves Script"""      # Use this as a tooltip for menu items and buttons.
-    bl_idname = "object.create_surfs"        # Unique identifier for buttons and menu items to reference.
+    bl_idname = "object.create_surfs"        # Unique identifier for bu: bpy.types.Contextttons and menu items to reference.
     bl_label = "Create surfaces"         # Display name in the interface.
     bl_options = {'REGISTER', 'UNDO'}  # Enable undo for the operator.
 
-    def execute(self, context):        # execute() is called when running the operator.
+    def execute(self, context: bpy.types.Context):        # execute() is called when running the operator.
 
         glist = GlobalList()
 
@@ -1730,11 +1977,48 @@ class CreateSurfacesBetweenCurves(bpy.types.Operator):
 def menu_func(self, context):
     self.layout.operator(CreateSurfacesBetweenCurves.bl_idname)
 
+class CreateNurbsBetweenCurves(bpy.types.Operator):
+    """My Creating Nurbs Between Curves Script"""      # Use this as a tooltip for menu items and buttons.
+    bl_idname = "object.create_nurbs"        # Unique identifier for bu: bpy.types.Contextttons and menu items to reference.
+    bl_label = "Create nurbs"         # Display name in the interface.
+    bl_options = {'REGISTER', 'UNDO'}  # Enable undo for the operator.
+
+    def execute(self, context: bpy.types.Context):        # execute() is called when running the operator.
+
+        glist = GlobalList()
+
+        active = context.active_object
+        cur = active.data
+        splines = cur.splines
+
+        for s in splines:
+            spline = Spline(glist)
+            for p in s.bezier_points:
+                spline.add_point(p.co, p.handle_left, p.handle_right)
+            if s.use_cyclic_u:
+                spline.round_spline()
+        glist.add_quads()
+        obj = active.copy()
+        obj.data = active.data.copy()
+        glist.subdivide_quads(obj)
+        context.collection.objects.link(obj)
+        news = glist.render_nurbs(active.name, context)
+        for new in news:
+            copy_transforms(active, new)
+
+        return {'FINISHED'}            # Lets Blender know the operator finished successfully.
+
+def menu_func_nurbs(self, context):
+    self.layout.operator(CreateNurbsBetweenCurves.bl_idname)
+
 def register():
     bpy.utils.register_class(CreateSurfacesBetweenCurves)
     bpy.types.VIEW3D_MT_object.append(menu_func)  # Adds the new operator to an existing menu.
+    bpy.utils.register_class(CreateNurbsBetweenCurves)
+    bpy.types.VIEW3D_MT_object.append(menu_func_nurbs)  # Adds the new operator to an existing menu.
 
 def unregister():
+    bpy.utils.unregister_class(CreateNurbsBetweenCurves)
     bpy.utils.unregister_class(CreateSurfacesBetweenCurves)
 
 
