@@ -618,7 +618,6 @@ class Segment:
         self.verts: Optional[List[int]] = None
         glist.add_segment(self)
         self.b1: Optional[mathutils.Vector] = None
-        self.b1_nurbs: Optional[mathutils.Vector] = None
 
     def add_quad(self, quad: "Quad | BigQuad"):
         self.quads.append(quad)
