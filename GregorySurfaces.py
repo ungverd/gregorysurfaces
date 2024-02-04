@@ -1527,7 +1527,54 @@ class Quad:
         p2 = neighbour.segments[(neighbour_i+2) % 4].calculate_midpoint()
         ve = p2 - p1
         return ve
+    
+    def render_nurbs(self):
+        self.calculate_coefs()
+        q: List[List[mathutils.Vector]] = [[]]
+        q[0].append(self.kk[0][0])
+        q[0].append(self.kk[0][0])
+        q[0].append((5*self.kk[0][0] + 6*self.kk[0][1])/11)
+        q[0].append((2*self.kk[0][0] + 15*self.kk[0][1] + 6*self.kk[0][2])/23)
+        q[0].append((6*self.kk[0][1] + 15*self.kk[0][2] + 2*self.kk[0][3])/23)
+        q[0].append((6*self.kk[0][2] + 5*self.kk[0][3])/11)
+        q[0].append(self.kk[0][3])
+        q[0].append(self.kk[0][3])
+        q.append([])
+        q[1].append(self.kk[0][0])
+        q[1].append((7*self.kk[0][0] + 3*self.kk[0][1] + 3*self.kk[1][0])/13)
+        q[1].append((18*self.kk[1][1] + 28*self.kk[0][0] + 42*self.kk[0][1] + 6*self.kk[0][2] + 15*self.kk[1][0])/109)
+        q[1].append((45*self.kk[1][1] + 18*self.kk[1][2] + 14*self.kk[0][0] + 84*self.kk[0][1] + 42*self.kk[0][2] + 2*self.kk[0][3] + 6*self.kk[1][0])/211)
+        q[1].append((18*self.kk[1][1] + 45*self.kk[1][2] + 2*self.kk[0][0] + 42*self.kk[0][1] + 84*self.kk[0][2] + 14*self.kk[0][3] + 6*self.kk[1][3])/211)
+        q[1].append((18*self.kk[1][2] + 6*self.kk[0][1] + 42*self.kk[0][2] + 28*self.kk[0][3] + 15*self.kk[1][3])/109)
+        q[1].append((3*self.kk[0][2] + 7*self.kk[0][3] + 3*self.kk[1][3])/13)
+        q[1].append(self.kk[0][3])
+        q.append([])
+        q[2].append((5*self.kk[0][0] + 6*self.kk[1][0])/11)
+        q[2].append((18*self.kk1[0][0] + 28*self.kk[0][0] + 15*self.kk[0][1] + 42*self.kk[1][0] + 6*self.kk[2][0])/109)
+        q[2].append((63*self.kk1[0][0] + 63*self.kk[1][1] + 18*self.kk[1][2] + 18*self.kk1[1][0] + 52*self.kk[0][0] + 84*self.kk[0][1] + 15*self.kk[0][2] + 84*self.kk[1][0] + 15*self.kk[2][0])/412)
+        q[2].append((63*self.kk1[0][0] + 189*self.kk[1][1] + 18*self.kk1[0][1] + 108*self.kk[1][2] + 27*self.kk1[1][0] + 18*self.kk[2][1] + 9*self.kk1[1][1] + 9*self.kk[2][2] + 28*self.kk[0][0] + 156*self.kk[0][1] + 84*self.kk[0][2] + 5*self.kk[0][3] + 42*self.kk[1][0] + 6*self.kk[1][3] + 6*self.kk[2][0])/703)
+        q[2].append((18*self.kk1[0][0] + 108*self.kk[1][1] + 63*self.kk1[0][1] + 189*self.kk[1][2] + 9*self.kk1[1][0] + 9*self.kk[2][1] + 27*self.kk1[1][1] + 18*self.kk[2][2] + 5*self.kk[0][0] + 84*self.kk[0][1] + 156*self.kk[0][2] + 28*self.kk[0][3] + 6*self.kk[1][0] + 42*self.kk[1][3] + 6*self.kk[2][3])/703)
+        q[2].append((18*self.kk[1][1] + 63*self.kk1[0][1] + 63*self.kk[1][2] + 18*self.kk1[1][1] + 15*self.kk[0][1] + 84*self.kk[0][2] + 52*self.kk[0][3] + 84*self.kk[1][3] + 15*self.kk[2][3])/412)
+        q[2].append((18*self.kk1[0][1] + 15*self.kk[0][2] + 28*self.kk[0][3] + 42*self.kk[1][3] + 6*self.kk[2][3])/109)
+        q[2].append((5*self.kk[0][3] + 6*self.kk[1][3])/11)
+        q.append([])
+        q[3].append((2*self.kk[0][0] + 15*self.kk[1][0] + 6*self.kk[2][0])/23)
+        q[3].append((45*self.kk1[0][0] + 18*self.kk1[1][0] + 14*self.kk[0][0] + 6*self.kk[0][1] + 84*self.kk[1][0] + 42*self.kk[2][0] + 2*self.kk[3][0])/211)
+        q[3].append((189*self.kk1[0][0] + 63*self.kk[1][1] + 18*self.kk1[0][1] + 27*self.kk[1][2] + 108*self.kk1[1][0] + 18*self.kk[2][1] + 9*self.kk1[1][1] + 9*self.kk[2][2] + 28*self.kk[0][0] + 42*self.kk[0][1] + 6*self.kk[0][2] + 156*self.kk[1][0] + 84*self.kk[2][0] + 5*self.kk[3][0] + 6*self.kk[3][1])/703)
+        q[3].append((234*self.kk1[0][0] + 234*self.kk[1][1] + 108*self.kk1[0][1] + 144*self.kk[1][2] + 144*self.kk1[1][0] + 108*self.kk[2][1] + 63*self.kk1[1][1] + 63*self.kk[2][2] + 14*self.kk[0][0] + 84*self.kk[0][1] + 42*self.kk[0][2] + 2*self.kk[0][3] + 84*self.kk[1][0] + 15*self.kk[1][3] + 42*self.kk[2][0] + 6*self.kk[2][3] + 2*self.kk[3][0] + 15*self.kk[3][1] + 6*self.kk[3][2])/1064)
+        q[3].append((108*self.kk1[0][0] + 144*self.kk[1][1] + 234*self.kk1[0][1] + 234*self.kk[1][2] + 63*self.kk1[1][0] + 63*self.kk[2][1] + 144*self.kk1[1][1] + 108*self.kk[2][2] + 2*self.kk[0][0] + 42*self.kk[0][1] + 84*self.kk[0][2] + 14*self.kk[0][3] + 15*self.kk[1][0] + 84*self.kk[1][3] + 6*self.kk[2][0] + 42*self.kk[2][3] + 6*self.kk[3][1] + 15*self.kk[3][2] + 2*self.kk[3][3])/1064)
+        q[3].append((18*self.kk1[0][0] + 27*self.kk[1][1] + 189*self.kk1[0][1] + 63*self.kk[1][2] + 9*self.kk1[1][0] + 9*self.kk[2][1] + 108*self.kk1[1][1] + 18*self.kk[2][2] + 6*self.kk[0][1] + 42*self.kk[0][2] + 28*self.kk[0][3] + 156*self.kk[1][3] + 84*self.kk[2][3] + 6*self.kk[3][2] + 5*self.kk[3][3])/703)
+        q[3].append((45*self.kk1[0][1] + 18*self.kk1[1][1] + 6*self.kk[0][2] + 14*self.kk[0][3] + 84*self.kk[1][3] + 42*self.kk[2][3] + 2*self.kk[3][3])/211)
+        q[3].append((2*self.kk[0][3] + 15*self.kk[1][3] + 6*self.kk[2][3])/23)
+        q.append([])
+        q[4].append((6*self.kk[1][0] + 15*self.kk[2][0] + 2*self.kk[3][0])/23)
+        q[4].append((18*self.kk1[0][0] + 45*self.kk1[1][0] + 2*self.kk[0][0] + 42*self.kk[1][0] + 84*self.kk[2][0] + 14*self.kk[3][0] + 6*self.kk[3][1])/256)
+        q[4].append((108*self.kk1[0][0] + 18*self.kk[1][1] + 9*self.kk1[0][1] + 9*self.kk[1][2] + 189*self.kk1[1][0] + 63*self.kk[2][1] + 18*self.kk1[1][1] + 27*self.kk[2][2] + 5*self.kk[0][0] + 6*self.kk[0][1] + 84*self.kk[1][0] + 156*self.kk[2][0] + 28*self.kk[3][0] + 42*self.kk[3][1] + 6*self.kk[3][2])/703)
+        q[4].append((144*self.kk1[0][0] + 108*self.kk[1][1] + 63*self.kk1[0][1] + 63*self.kk[1][2] + 234*self.kk1[1][0] + 234*self.kk[2][1] + 108*self.kk1[1][1] + 144*self.kk[2][2] + 2*self.kk[0][0] + 15*self.kk[0][1] + 6*self.kk[0][2] + 42*self.kk[1][0] + 6*self.kk[1][3] + 84*self.kk[2][0] + 15*self.kk[2][3] + 14*self.kk[3][0] + 84*self.kk[3][1] + 42*self.kk[3][2] + 2*self.kk[3][3])/1064)
+        q[4].append((63*self.kk1[0][0] + 63*self.kk[1][1] + 144*self.kk1[0][1] + 108*self.kk[1][2] + 108*self.kk1[1][0] + 144*self.kk[2][1] + 234*self.kk1[1][1] + 234*self.kk[2][2] + 6*self.kk[0][1] + 15*self.kk[0][2] + 2*self.kk[0][3] + 6*self.kk[1][0] + 42*self.kk[1][3] + 15*self.kk[2][0] + 84*self.kk[2][3] + 2*self.kk[3][0] + 42*self.kk[3][1] + 84*self.kk[3][2] + 14*self.kk[3][3])/1064)
+        q[4].append((9*self.kk1[0][0] + 9*self.kk[1][1] + 108*self.kk1[0][1] + 18*self.kk[1][2] + 18*self.kk1[1][0] + 27*self.kk[2][1] + 189*self.kk1[1][1] + 63*self.kk[2][2] + 6*self.kk[0][2] + 5*self.kk[0][3] + 84*self.kk[1][3] + 156*self.kk[2][3] + 6*self.kk[3][1] + 42*self.kk[3][2] + 28*self.kk[3][3])/703)
 
+        
 class GlobalList:
     def __init__(self):
         self.reduced_points: List[mathutils.Vector] = []
