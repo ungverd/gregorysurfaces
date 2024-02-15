@@ -34,6 +34,46 @@ TH2 = TH**2
 
 #**************************************************************************
 
+class GregCoplanarVector(bpy.types.PropertyGroup):
+    name: bpy.props.StringProperty(default="")
+    vector: bpy.props.FloatVectorProperty(size=3, default=(0,0,0))
+
+bpy.utils.register_class(GregCoplanarVector)
+
+class GregBasicEnd(bpy.types.PropertyGroup):
+    curve: bpy.props.PointerProperty(type=bpy.types.Object)
+    end: bpy.props.IntProperty(default=-1)
+
+bpy.utils.register_class(GregBasicEnd)
+
+class GregCurveEndItem(bpy.types.PropertyGroup):
+    basic_end: GregBasicEnd
+    empty: bpy.props.PointerProperty(type=bpy.types.Object)
+    is_coplanar: bpy.props.BoolProperty(default=False)
+    coplanar_vector: bpy.props.PointerProperty(type=GregCoplanarVector)
+    is_collinear: bpy.props.BoolProperty(default=False)
+    collinear_to: bpy.props.PointerProperty(type=GregBasicEnd)
+
+bpy.utils.register_class(GregCurveEndItem)
+
+class GregEmptyItem(bpy.types.PropertyGroup):
+    name: bpy.props.StringProperty(default="")
+    curves: bpy.props.CollectionProperty(type=GregCurveForEmptyItem)
+    empty: bpy.props.PointerProperty(type=bpy.types.Object)
+    coplanars: bpy.props.CollectionProperty(type=GregCoplanarVector)
+
+bpy.utils.register_class(GregEmptyItem)
+
+class GregCollectionSettings(bpy.types.PropertyGroup):
+    used_for_greg: bpy.props.BoolProperty(default=False)
+    empties: bpy.props.CollectionProperty(type=GregEmptyItem)
+
+bpy.utils.register_class(GregCollectionSettings)
+
+bpy.types.Collection.greg_settings = GregCollectionSettings
+bpy.types.Object.greg_empty_settings = GregEmptyItem
+
+#**************************************************************************
 try:
     #raise(ModuleNotFoundError)
     import numpy as np
