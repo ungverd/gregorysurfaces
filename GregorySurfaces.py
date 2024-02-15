@@ -1718,10 +1718,11 @@ class CreateSurfacesBetweenCurves(bpy.types.Operator):
             if s.use_cyclic_u:
                 spline.round_spline()
         glist.add_quads()
-        obj = active.copy()
-        obj.data = active.data.copy()
-        glist.subdivide_quads(obj)
-        context.collection.objects.link(obj)
+        if len(glist.big_quads) > 0:
+            obj = active.copy()
+            obj.data = active.data.copy()
+            glist.subdivide_quads(obj)
+            context.collection.objects.link(obj)
         new = glist.render_mesh(d, active.name, context)
         copy_transforms(active, new)
 
