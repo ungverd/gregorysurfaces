@@ -22,7 +22,7 @@ bl_info = {
     "category": "Object",
 }
 
-
+from inspect import getouterframes, currentframe
 import bpy
 import mathutils
 from typing import List, Optional, Tuple, Callable
@@ -34,68 +34,31 @@ TH2 = TH**2
 
 #**************************************************************************
 
-class GregCoplanarVector(bpy.types.PropertyGroup):
-    name: bpy.props.StringProperty(default="")
-    vector: bpy.props.FloatVectorProperty(size=3, default=(0,0,0))
+mode = [bpy.context.object.mode]
 
-bpy.utils.register_class(GregCoplanarVector)
+def on_depsgraph_update(scene):
+    level = len(getouterframes(currentframe()))
+    if level < 2:
+        now_mode = bpy.context.object.mode
+        if now_mode != mode[0]:
+            mode[0] = now_mode
+            if now_mode == "EDIT":
+                if bpy.context.active_object.greg_curve_settings.used_for_greg:
+                    print("here")
+                    on_curve_edit_mode(bpy.context.active_object)
 
-class GregBasicEnd(bpy.types.PropertyGroup):
-    curve: bpy.props.PointerProperty(type=bpy.types.Object)
-    end: bpy.props.IntProperty(default=-1)
+def on_curve_edit_mode(curve_obj):
+    bpy.ops.object.mode_set(mode='OBJECT')
+    end1_name = curve_obj.greg_curve_settings.end1_name
+    end2_name = curve_obj.greg_curve_settings.end2_name
+    end1_empty = curve_obj.greg_curve_settings.end1_empty
+    end2_empty = curve_obj.greg_curve_settings.end2_empty
+    hook1_name = end1_empty.greg_empty_settings.curve_ends[end1_name].hook
+    hook2_name = end2_empty.greg_empty_settings.curve_ends[end2_name].hook
+    bpy.ops.object.modifier_apply(modifier=hook1_name)
+    bpy.ops.object.modifier_apply(modifier=hook2_name)
+    bpy.ops.object.mode_set(mode='EDIT')
 
-bpy.utils.register_class(GregBasicEnd)
-
-class GregCurveEndItem(bpy.types.PropertyGroup):
-    basic_end: GregBasicEnd
-    empty: bpy.props.PointerProperty(type=bpy.types.Object)
-    is_coplanar: bpy.props.BoolProperty(default=False)
-    coplanar_vector: bpy.props.PointerProperty(type=GregCoplanarVector)
-    is_collinear: bpy.props.BoolProperty(default=False)
-    collinear_to: bpy.props.PointerProperty(type=GregBasicEnd)
-
-bpy.utils.register_class(GregCurveEndItem)
-
-class GregEmptyItem(bpy.types.PropertyGroup):
-    name: bpy.props.StringProperty(default="")
-    empty: bpy.props.PointerProperty(type=bpy.types.Object)
-
-bpy.utils.register_class(GregEmptyItem)
-
-class GregCurveItem(bpy.types.PropertyGroup):
-    name: bpy.props.StringProperty(default="")
-    curve: bpy.props.PointerProperty(type=bpy.types.Object)
-
-bpy.utils.register_class(GregCurveItem)
-
-class GregCollectionSettings(bpy.types.PropertyGroup):
-    used_for_greg: bpy.props.BoolProperty(default=False)
-    empties: bpy.props.CollectionProperty(type=GregEmptyItem)
-    curves: bpy.props.CollectionProperty(type=GregCurveItem)
-    max_id: bpy.props.IntProperty(default=0)
-
-bpy.utils.register_class(GregCollectionSettings)
-
-class GregEmpty(bpy.types.PropertyGroup):
-    curve_ends: bpy.props.CollectionProperty(type=GregCurveEndItem)
-    is_used_for_greg: bpy.props.BoolProperty(default=False)
-    coplanars: bpy.props.CollectionProperty(type=GregCoplanarVector)
-    name: bpy.props.StringProperty(default="")
-
-bpy.utils.register_class(GregEmpty)
-
-class GregCurve(bpy.types.PropertyGroup):
-    settings: bpy.props.PointerProperty(type=GregCurveItem)
-    is_used_for_greg: bpy.props.BoolProperty(default=False)
-    end1: GregCurveEndItem
-    end2: GregCurveEndItem
-    name: bpy.props.StringProperty(default="")
-
-bpy.utils.register_class(GregCurve)
-
-bpy.types.Collection.greg_settings = GregCollectionSettings
-bpy.types.Object.greg_empty_settings = GregEmpty
-bpy.types.Object.greg_curve_settings = GregCurve
 
 #**************************************************************************
 try:
@@ -612,6 +575,7 @@ class BigPoint:
         self.i = i
         self.count = 0
         self.coords = coords
+        self.created_curves: List[Tuple[str, int]] = []
 
     def add_point(self, point: "Point"):
         self.points.append(point)
@@ -1750,6 +1714,67 @@ class GlobalList:
         obj = bpy.data.objects.new(name + "_GeneratedMesh", mesh)
         context.collection.objects.link(obj)
         return obj
+    
+    def add_many_curves(self, name: str, parent_collection: bpy.types.Collection, context: bpy.types.Context):
+        collection = bpy.data.collections.new(name)
+        collection.greg_settings.used_for_greg = True
+        parent_collection.children.link(collection)
+        for segment in self.segments:
+            curve = bpy.data.curves.new(name="greg_curve", type="CURVE")
+            spline = curve.splines.new("BEZIER")
+            spline.bezier_points.add(1)
+            for i, p in enumerate((segment.p1, segment.p2)):
+                spline.bezier_points[i].co = p.bpoint.coords
+                spline.bezier_points[i].handle_left = p.bpoint.coords + p.handle_left
+                spline.bezier_points[i].handle_right = p.bpoint.coords + p.handle_right
+            curve_obj = bpy.data.objects.new(name="greg_curve_obj", object_data=curve)
+            curve_obj.greg_curve_settings.used_for_greg = True
+            curve_obj.greg_curve_settings.name = str(collection.greg_settings.max_id)
+            collection.greg_settings.max_id += 1
+            curve_prop = collection.greg_settings.curves.add()
+            curve_prop.name = curve_obj.greg_curve_settings.name
+            curve_prop.curve = curve_obj
+            for i, p in enumerate((segment.p1, segment.p2)):
+                p.bpoint.created_curves.append((curve_prop.name, i))
+            collection.objects.link(curve_obj)
+        for bpoint in self.big_points:
+            empty_obj = bpy.data.objects.new("greg_empty", None)
+            empty_obj.location = bpoint.coords
+            empty_obj.greg_empty_settings.used_for_greg = True
+            empty_obj.greg_empty_settings.name = str(collection.greg_settings.max_id)
+            collection.greg_settings.max_id += 1
+            empty_prop = collection.greg_settings.empties.add()
+            empty_prop.name = empty_obj.greg_empty_settings.name
+            empty_prop.empty = empty_obj
+            collection.objects.link(empty_obj)
+            for name, i in bpoint.created_curves:
+                curve_obj = collection.greg_settings.curves[name].curve
+                curve_end = empty_obj.greg_empty_settings.curve_ends.add()
+                curve_end.basic_end.curve = curve_obj
+                curve_end.basic_end.end = i
+                curve_end.empty = empty_obj
+                curve_end.name = str(collection.greg_settings.max_id)
+                collection.greg_settings.max_id += 1
+                if i == 0:
+                    curve_obj.greg_curve_settings.end1_name = curve_end.name
+                    curve_obj.greg_curve_settings.end1_empty = empty_obj
+                else:
+                    curve_obj.greg_curve_settings.end2_name = curve_end.name
+                    curve_obj.greg_curve_settings.end2_empty = empty_obj
+                add_hook(curve_obj, empty_obj, i, context)
+
+
+def add_hook(curve_obj: bpy.types.Object, empty_obj: bpy.types.Object, i: int, context: bpy.types.Context):
+    hook = curve_obj.modifiers.new(name=f"{curve_obj.name}_{empty_obj.name}", type='HOOK')
+    hook.vertex_indices_set([i*3, i*3+1, i*3+2])
+    bpy.context.evaluated_depsgraph_get()
+    hook.object = empty_obj
+    if i == 0:
+        end_name = curve_obj.greg_curve_settings.end1_name
+    else:
+        end_name = curve_obj.greg_curve_settings.end2_name
+    empty_obj.greg_empty_settings.curve_ends[end_name].hook = hook.name
+
         
 
 
@@ -1770,6 +1795,7 @@ class CreateSurfacesBetweenCurves(bpy.types.Operator):
         glist = GlobalList()
 
         active = context.active_object
+        bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
         cur = active.data
         nedges = cur.resolution_u
         d.conditional_update(nedges)
@@ -1787,6 +1813,7 @@ class CreateSurfacesBetweenCurves(bpy.types.Operator):
             obj.data = active.data.copy()
             glist.subdivide_quads(obj)
             context.collection.objects.link(obj)
+        glist.add_many_curves(active.name, active.users_collection[0], context)
         new = glist.render_mesh(d, active.name, context)
         copy_transforms(active, new)
 
@@ -1796,11 +1823,85 @@ def menu_func(self, context):
     self.layout.operator(CreateSurfacesBetweenCurves.bl_idname)
 
 def register():
+    class GregCoplanarVector(bpy.types.PropertyGroup):
+        name: bpy.props.StringProperty(default="")
+        vector: bpy.props.FloatVectorProperty(size=3, default=(0,0,0))
+
+    bpy.utils.register_class(GregCoplanarVector)
+
+    class GregBasicEnd(bpy.types.PropertyGroup):
+        curve: bpy.props.PointerProperty(type=bpy.types.Object)
+        end: bpy.props.IntProperty(default=-1)
+
+    bpy.utils.register_class(GregBasicEnd)
+
+    class GregCurveEndItem(bpy.types.PropertyGroup):
+        basic_end: bpy.props.PointerProperty(type=GregBasicEnd)
+        empty: bpy.props.PointerProperty(type=bpy.types.Object)
+        is_coplanar: bpy.props.BoolProperty(default=False)
+        coplanar_vector: bpy.props.PointerProperty(type=bpy.types.Object)
+        is_collinear: bpy.props.BoolProperty(default=False)
+        collinear_to: bpy.props.PointerProperty(type=GregBasicEnd)
+        hook: bpy.props.StringProperty(default="")
+        name: bpy.props.StringProperty(default="")
+
+    bpy.utils.register_class(GregCurveEndItem)
+
+    class GregEmptyItem(bpy.types.PropertyGroup):
+        name: bpy.props.StringProperty(default="")
+        empty: bpy.props.PointerProperty(type=bpy.types.Object)
+
+    bpy.utils.register_class(GregEmptyItem)
+
+    class GregCurveItem(bpy.types.PropertyGroup):
+        name: bpy.props.StringProperty(default="")
+        curve: bpy.props.PointerProperty(type=bpy.types.Object)
+
+    bpy.utils.register_class(GregCurveItem)
+
+    class GregCollectionSettings(bpy.types.PropertyGroup):
+        used_for_greg: bpy.props.BoolProperty(default=False)
+        empties: bpy.props.CollectionProperty(type=GregEmptyItem)
+        curves: bpy.props.CollectionProperty(type=GregCurveItem)
+        max_id: bpy.props.IntProperty(default=0)
+
+    bpy.utils.register_class(GregCollectionSettings)
+
+    class GregEmpty(bpy.types.PropertyGroup):
+        curve_ends: bpy.props.CollectionProperty(type=GregCurveEndItem)
+        used_for_greg: bpy.props.BoolProperty(default=False)
+        coplanars: bpy.props.CollectionProperty(type=GregCoplanarVector)
+        name: bpy.props.StringProperty(default="")
+
+    bpy.utils.register_class(GregEmpty)
+
+    class GregCurve(bpy.types.PropertyGroup):
+        used_for_greg: bpy.props.BoolProperty(default=False)
+        end1_empty: bpy.props.PointerProperty(type=bpy.types.Object)
+        end2_empty: bpy.props.PointerProperty(type=bpy.types.Object)
+        end1_name: bpy.props.StringProperty(default="")
+        end2_name: bpy.props.StringProperty(default="")
+        name: bpy.props.StringProperty(default="")
+
+    bpy.utils.register_class(GregCurve)
+
+    bpy.types.Collection.greg_settings = bpy.props.PointerProperty(type=GregCollectionSettings)
+    bpy.types.Object.greg_empty_settings = bpy.props.PointerProperty(type=GregEmpty)
+    bpy.types.Object.greg_curve_settings = bpy.props.PointerProperty(type=GregCurve)
     bpy.utils.register_class(CreateSurfacesBetweenCurves)
     bpy.types.VIEW3D_MT_object.append(menu_func)  # Adds the new operator to an existing menu.
+    bpy.app.handlers.depsgraph_update_post.append(on_depsgraph_update)
     
 def unregister():
     bpy.utils.unregister_class(CreateSurfacesBetweenCurves)
+    bpy.utils.unregister_class(GregCurve)
+    bpy.utils.unregister_class(GregEmpty)
+    bpy.utils.unregister_class(GregCollectionSettings)
+    bpy.utils.unregister_class(GregCurveItem)
+    bpy.utils.unregister_class(GregEmptyItem)
+    bpy.utils.unregister_class(GregCurveEndItem)
+    bpy.utils.unregister_class(GregBasicEnd)
+    bpy.utils.unregister_class(GregCoplanarVector)
 
 
 # This allows you to run the script directly from Blender's Text editor
