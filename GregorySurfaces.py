@@ -25,7 +25,7 @@ bl_info = {
 
 import bpy
 import mathutils
-from typing import List, Optional, Tuple, Callable, Literal
+from typing import List, Optional, Tuple, Callable
 from enum import Enum
 import math
 
@@ -58,20 +58,44 @@ bpy.utils.register_class(GregCurveEndItem)
 
 class GregEmptyItem(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty(default="")
-    curves: bpy.props.CollectionProperty(type=GregCurveForEmptyItem)
     empty: bpy.props.PointerProperty(type=bpy.types.Object)
-    coplanars: bpy.props.CollectionProperty(type=GregCoplanarVector)
 
 bpy.utils.register_class(GregEmptyItem)
+
+class GregCurveItem(bpy.types.PropertyGroup):
+    name: bpy.props.StringProperty(default="")
+    curve: bpy.props.PointerProperty(type=bpy.types.Object)
+
+bpy.utils.register_class(GregCurveItem)
 
 class GregCollectionSettings(bpy.types.PropertyGroup):
     used_for_greg: bpy.props.BoolProperty(default=False)
     empties: bpy.props.CollectionProperty(type=GregEmptyItem)
+    curves: bpy.props.CollectionProperty(type=GregCurveItem)
+    max_id: bpy.props.IntProperty(default=0)
 
 bpy.utils.register_class(GregCollectionSettings)
 
+class GregEmpty(bpy.types.PropertyGroup):
+    curve_ends: bpy.props.CollectionProperty(type=GregCurveEndItem)
+    is_used_for_greg: bpy.props.BoolProperty(default=False)
+    coplanars: bpy.props.CollectionProperty(type=GregCoplanarVector)
+    name: bpy.props.StringProperty(default="")
+
+bpy.utils.register_class(GregEmpty)
+
+class GregCurve(bpy.types.PropertyGroup):
+    settings: bpy.props.PointerProperty(type=GregCurveItem)
+    is_used_for_greg: bpy.props.BoolProperty(default=False)
+    end1: GregCurveEndItem
+    end2: GregCurveEndItem
+    name: bpy.props.StringProperty(default="")
+
+bpy.utils.register_class(GregCurve)
+
 bpy.types.Collection.greg_settings = GregCollectionSettings
-bpy.types.Object.greg_empty_settings = GregEmptyItem
+bpy.types.Object.greg_empty_settings = GregEmpty
+bpy.types.Object.greg_curve_settings = GregCurve
 
 #**************************************************************************
 try:
