@@ -34,7 +34,7 @@ TH2 = TH**2
 
 #**************************************************************************
 
-mode = [bpy.context.object.mode]
+mode = [None]
 
 def on_depsgraph_update(scene):
     level = len(getouterframes(currentframe()))
@@ -44,19 +44,19 @@ def on_depsgraph_update(scene):
             mode[0] = now_mode
             if now_mode == "EDIT":
                 if bpy.context.active_object.greg_curve_settings.used_for_greg:
-                    print("here")
                     on_curve_edit_mode(bpy.context.active_object)
 
-def on_curve_edit_mode(curve_obj):
+def on_curve_edit_mode(curve_obj: bpy.types.Object):
     bpy.ops.object.mode_set(mode='OBJECT')
-    end1_name = curve_obj.greg_curve_settings.end1_name
-    end2_name = curve_obj.greg_curve_settings.end2_name
-    end1_empty = curve_obj.greg_curve_settings.end1_empty
-    end2_empty = curve_obj.greg_curve_settings.end2_empty
-    hook1_name = end1_empty.greg_empty_settings.curve_ends[end1_name].hook
-    hook2_name = end2_empty.greg_empty_settings.curve_ends[end2_name].hook
-    bpy.ops.object.modifier_apply(modifier=hook1_name)
-    bpy.ops.object.modifier_apply(modifier=hook2_name)
+    for end_empty in (curve_obj.greg_curve_settings.end1_empty, curve_obj.greg_curve_settings.end2_empty):
+        for end in end_empty.greg_empty_settings.curve_ends:
+            one_of_curve_objs = end.basic_end.curve
+            i = end.basic_end.end
+            bpy.context.view_layer.objects.active = one_of_curve_objs
+            hook_name = end.hook
+            bpy.ops.object.modifier_apply(modifier=hook_name)
+            add_hook(one_of_curve_objs, end_empty, i)
+    bpy.context.view_layer.objects.active = curve_obj
     bpy.ops.object.mode_set(mode='EDIT')
 
 
@@ -1709,18 +1709,21 @@ class GlobalList:
             segment.calculate_verts(self, d)
         for quad in self.quads:
             quad.render_quad(d, self)
-        mesh = bpy.data.meshes.new(name=name + "_Mesh")
-        mesh.from_pydata(self.verts, [], self.faces)
-        obj = bpy.data.objects.new(name + "_GeneratedMesh", mesh)
-        context.collection.objects.link(obj)
-        return obj
-    
+        if self.verts is not None and self.faces is not None:
+            mesh = bpy.data.meshes.new(name=name + "_Mesh")
+            mesh.from_pydata(self.verts, [], self.faces)
+            obj = bpy.data.objects.new(name + "_GeneratedMesh", mesh)
+            context.collection.objects.link(obj)
+            return obj
+        return None
+
     def add_many_curves(self, name: str, parent_collection: bpy.types.Collection, context: bpy.types.Context):
         collection = bpy.data.collections.new(name)
         collection.greg_settings.used_for_greg = True
         parent_collection.children.link(collection)
         for segment in self.segments:
             curve = bpy.data.curves.new(name="greg_curve", type="CURVE")
+            curve.dimensions = "3D"
             spline = curve.splines.new("BEZIER")
             spline.bezier_points.add(1)
             for i, p in enumerate((segment.p1, segment.p2)):
@@ -1764,10 +1767,12 @@ class GlobalList:
                 add_hook(curve_obj, empty_obj, i, context)
 
 
-def add_hook(curve_obj: bpy.types.Object, empty_obj: bpy.types.Object, i: int, context: bpy.types.Context):
+def add_hook(curve_obj: bpy.types.Object, empty_obj: bpy.types.Object, i: int, context: Optional[bpy.types.Context]=None):
+    if context is None:
+        context = bpy.context
     hook = curve_obj.modifiers.new(name=f"{curve_obj.name}_{empty_obj.name}", type='HOOK')
     hook.vertex_indices_set([i*3, i*3+1, i*3+2])
-    bpy.context.evaluated_depsgraph_get()
+    context.evaluated_depsgraph_get()
     hook.object = empty_obj
     if i == 0:
         end_name = curve_obj.greg_curve_settings.end1_name
@@ -1795,7 +1800,10 @@ class CreateSurfacesBetweenCurves(bpy.types.Operator):
         glist = GlobalList()
 
         active = context.active_object
-        bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+        mb = active.matrix_basis
+        active.data.transform(mb)
+        active.matrix_basis.identity()
+
         cur = active.data
         nedges = cur.resolution_u
         d.conditional_update(nedges)
@@ -1815,7 +1823,8 @@ class CreateSurfacesBetweenCurves(bpy.types.Operator):
             context.collection.objects.link(obj)
         glist.add_many_curves(active.name, active.users_collection[0], context)
         new = glist.render_mesh(d, active.name, context)
-        copy_transforms(active, new)
+        if new is not None:
+            copy_transforms(active, new)
 
         return {'FINISHED'}            # Lets Blender know the operator finished successfully.
 
