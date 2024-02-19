@@ -1850,7 +1850,7 @@ def check_ends_coplanar(ends1, ends2, ends3, empty, collection: bpy.types.Collec
         return coplanar_vector
     return None
 
-def add_coplanar_arrow(set_ends, coplanar_vector: mathutils.Vector, empty: bpy.types.Object, collection: bpy.types.Collection)
+def add_coplanar_arrow(set_ends, coplanar_vector: mathutils.Vector, empty: bpy.types.Object, collection: bpy.types.Collection):
     name = get_next_id(collection)
     arrow = bpy.data.objects.new("arrow", None)
     arrow.parent = empty
