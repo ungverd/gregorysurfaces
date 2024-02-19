@@ -1858,7 +1858,8 @@ def add_coplanar_arrow(set_ends, coplanar_vector: mathutils.Vector, empty: bpy.t
     collection.objects.link(arrow)
     vec = mathutils.Vector((0,0,1)) @ arrow.matrix_parent_inverse
     vec.normalize()
-    quat = coplanar_vector.rotation_difference(vec)
+    #vec = mathutils.Vector((0,0,1))
+    quat = vec.rotation_difference(coplanar_vector)
     arrow.rotation_mode = "QUATERNION"
     arrow.rotation_quaternion = quat
     for end in set_ends:
