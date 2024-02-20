@@ -42,22 +42,18 @@ def on_depsgraph_update(scene):
     if level < 2:
         if bpy.context.object is not None:
             now_mode = bpy.context.object.mode
-            if now_mode != mode[0]:
-                mode[0] = now_mode
-                if now_mode == "EDIT":
-                    if bpy.context.active_object.greg_curve_settings.used_for_greg:
+            if now_mode == "EDIT":
+                if bpy.context.active_object.greg_curve_settings.used_for_greg:
+                    if now_mode != mode[0]:
+                        mode[0] = now_mode
                         on_curve_edit_mode(bpy.context.active_object)
 
 def on_curve_edit_mode(curve_obj: bpy.types.Object):
     bpy.ops.object.mode_set(mode='OBJECT')
     for end_empty in (curve_obj.greg_curve_settings.end1_empty, curve_obj.greg_curve_settings.end2_empty):
         for end in end_empty.greg_empty_settings.curve_ends:
-            one_of_curve_objs = end.basic_end.curve
-            i = end.basic_end.end
-            bpy.context.view_layer.objects.active = one_of_curve_objs
-            hook_name = end.hook
-            bpy.ops.object.modifier_apply(modifier=hook_name)
-            add_hook(one_of_curve_objs, end_empty, i)
+            apply_hook(end)
+            add_hook(end)
     bpy.context.view_layer.objects.active = curve_obj
     bpy.ops.object.mode_set(mode='EDIT')
 
@@ -1766,8 +1762,9 @@ class GlobalList:
                 else:
                     curve_obj.greg_curve_settings.end2_name = curve_end.name
                     curve_obj.greg_curve_settings.end2_empty = empty_obj
-                add_hook(curve_obj, empty_obj, i, context)
             coplanar_collinear(empty_obj, collection)
+            for end in empty_obj.greg_empty_settings.curve_ends:
+                add_hook(end, context)
 
 def coplanar_collinear(empty: bpy.types.Object, collection: bpy.types.Collection):
     for i, end1 in enumerate(empty.greg_empty_settings.curve_ends):
@@ -1852,7 +1849,15 @@ def check_ends_coplanar(ends1, ends2, ends3, empty, collection: bpy.types.Collec
 
 def add_coplanar_arrow(set_ends, coplanar_vector: mathutils.Vector, empty: bpy.types.Object, collection: bpy.types.Collection):
     name = get_next_id(collection)
-    arrow = bpy.data.objects.new("arrow", None)
+    arrow = bpy.data.objects.new("greg_arrow", None)
+    arrow.greg_arrow_settings.name = name
+    arrow.greg_arrow_settings.used_for_greg = True
+    empty_arrow_settings = empty.greg_empty_settings.coplanars.add()
+    empty_arrow_settings.name = name
+    empty_arrow_settings.arrow = arrow
+    collection_arrow_settings = collection.greg_settings.arrows.add()
+    collection_arrow_settings.name = name
+    collection_arrow_settings.arrow = arrow
     arrow.parent = empty
     arrow.empty_display_type = "SINGLE_ARROW"
     collection.objects.link(arrow)
@@ -1862,30 +1867,47 @@ def add_coplanar_arrow(set_ends, coplanar_vector: mathutils.Vector, empty: bpy.t
     quat = vec.rotation_difference(coplanar_vector)
     arrow.rotation_mode = "QUATERNION"
     arrow.rotation_quaternion = quat
+    constraint = arrow.constraints.new(type="LIMIT_LOCATION")
+    constraint.owner_space = "LOCAL"
+    constraint.max_x = 0
+    constraint.max_y = 0
+    constraint.max_z = 0
+    constraint.min_x = 0
+    constraint.min_y = 0
+    constraint.min_z = 0
     for end in set_ends:
         end.is_coplanar = True
         end.coplanar_vector = arrow
-        
+   
 def get_next_id(collection: bpy.types.Collection):
     name = str(collection.greg_settings.max_id)
     collection.greg_settings.max_id += 1
     return name
 
 
-def add_hook(curve_obj: bpy.types.Object, empty_obj: bpy.types.Object, i: int, context: Optional[bpy.types.Context]=None):
+def add_hook(end, context: Optional[bpy.types.Context]=None):
     if context is None:
         context = bpy.context
-    hook = curve_obj.modifiers.new(name=f"{curve_obj.name}_{empty_obj.name}", type='HOOK')
+    curve_obj = end.basic_end.curve
+    i = end.basic_end.end
+    if end.is_coplanar:
+        empty_to_link = end.coplanar_vector
+    else:
+        empty_to_link = end.empty
+    hook = curve_obj.modifiers.new(name=f"{curve_obj.name}_{empty_to_link.name}", type='HOOK')
     hook.vertex_indices_set([i*3, i*3+1, i*3+2])
     context.evaluated_depsgraph_get()
-    hook.object = empty_obj
-    if i == 0:
-        end_name = curve_obj.greg_curve_settings.end1_name
-    else:
-        end_name = curve_obj.greg_curve_settings.end2_name
-    empty_obj.greg_empty_settings.curve_ends[end_name].hook = hook.name
+    hook.object = empty_to_link
+    end.hook = hook.name
 
-        
+def apply_hook(end, context: Optional[bpy.types.Context]=None):
+    #requires Object mode
+    if context is None:
+        context = bpy.context
+    curve_obj = end.basic_end.curve
+    context.view_layer.objects.active = curve_obj
+    hook_name = end.hook
+    bpy.ops.object.modifier_apply(modifier=hook_name) 
 
 
 def copy_transforms(active: bpy.types.Object, new: bpy.types.Object):
@@ -1937,11 +1959,17 @@ def menu_func(self, context):
     self.layout.operator(CreateSurfacesBetweenCurves.bl_idname)
 
 def register():
-    class GregCoplanarVector(bpy.types.PropertyGroup):
+    class GregArrowItem(bpy.types.PropertyGroup):
         name: bpy.props.StringProperty(default="")
         arrow: bpy.props.PointerProperty(type=bpy.types.Object)
 
-    bpy.utils.register_class(GregCoplanarVector)
+    bpy.utils.register_class(GregArrowItem)
+
+    class GregArrow(bpy.types.PropertyGroup):
+        used_for_greg: bpy.props.BoolProperty(default=False)
+        name: bpy.props.StringProperty(default="")
+
+    bpy.utils.register_class(GregArrow)
 
     class GregBasicEnd(bpy.types.PropertyGroup):
         curve: bpy.props.PointerProperty(type=bpy.types.Object)
@@ -1977,7 +2005,7 @@ def register():
         used_for_greg: bpy.props.BoolProperty(default=False)
         empties: bpy.props.CollectionProperty(type=GregEmptyItem)
         curves: bpy.props.CollectionProperty(type=GregCurveItem)
-        arrows: bpy.props.CollectionProperty(type=GregCoplanarVector)
+        arrows: bpy.props.CollectionProperty(type=GregArrowItem)
         max_id: bpy.props.IntProperty(default=0)
 
     bpy.utils.register_class(GregCollectionSettings)
@@ -1985,7 +2013,7 @@ def register():
     class GregEmpty(bpy.types.PropertyGroup):
         curve_ends: bpy.props.CollectionProperty(type=GregCurveEndItem)
         used_for_greg: bpy.props.BoolProperty(default=False)
-        coplanars: bpy.props.CollectionProperty(type=GregCoplanarVector)
+        coplanars: bpy.props.CollectionProperty(type=GregArrowItem)
         name: bpy.props.StringProperty(default="")
 
     bpy.utils.register_class(GregEmpty)
@@ -2003,6 +2031,7 @@ def register():
     bpy.types.Collection.greg_settings = bpy.props.PointerProperty(type=GregCollectionSettings)
     bpy.types.Object.greg_empty_settings = bpy.props.PointerProperty(type=GregEmpty)
     bpy.types.Object.greg_curve_settings = bpy.props.PointerProperty(type=GregCurve)
+    bpy.types.Object.greg_arrow_settings = bpy.props.PointerProperty(type=GregArrow)
     bpy.utils.register_class(CreateSurfacesBetweenCurves)
     bpy.types.VIEW3D_MT_object.append(menu_func)  # Adds the new operator to an existing menu.
     bpy.app.handlers.depsgraph_update_post.append(on_depsgraph_update)
