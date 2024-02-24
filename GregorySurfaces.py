@@ -1580,7 +1580,13 @@ class Quad:
         q[5].append((18*self.kk1[0][0] + 63*self.kk[1][0] + 63*self.kk[2][1] + 18*self.kk[2][2] + 15*self.kk[1][0] + 84*self.kk[2][0] + 52*self.kk[3][0] + 84*self.kk[3][1] + 15*self.kk[3][2])/412)
         q[5].append((27*self.kk1[0][0] + 18*self.kk[1][1] + 9*self.kk1[0][1] + 9*self.kk[1][2] + 63*self.kk1[1][0] + 189*self.kk[2][1] + 18*self.kk1[1][1] + 108*self.kk[2][2] + 6*self.kk[1][0] + 42*self.kk[2][0] +6*self.kk[2][3] + 28*self.kk[3][0] + 156*self.kk[3][1] + 84*self.kk[3][2] + 5*self.kk[3][3])/703)
         q[5].append((9*self.kk1[0][0] + 9*self.kk[1][1] + 27*self.kk1[0][1] + 18*self.kk[1][2] + 18*self.kk1[1][0] + 108*self.kk[2][1] + 63*self.kk1[1][1] + 189*self.kk[2][2] + 6*self.kk[1][3] + 6*self.kk[2][0] +42*self.kk[2][3] + 5*self.kk[3][0] + 84*self.kk[3][1] + 156*self.kk[3][2] + 28*self.kk[3][3])/703)
-        
+        q[5].append((18*self.kk1[0][1] + 18*self.kk[2][1] + 63*self.kk1[1][1] + 63*self.kk[2][2] + 15*self.kk[1][3] + 84*self.kk[2][3] + 15*self.kk[3][1] + 84*self.kk[3][2] + 52*self.kk[3][3])/412)
+        q[5].append((18*self.kk1[1][1] + 6*self.kk[1][3] + 42*self.kk[2][3] + 15*self.kk[3][2] + 28*self.kk[3][3])/109)
+        q[5].append((6*self.kk[2][3] + 5*self.kk[3][3])/11)
+        q.append([])
+        q[6].append(self.kk[3][0])
+        q[6].append((3*self.kk[2][0] + 7*self.kk[3][0] + 3*self.kk[3][1])/13)
+        q[6].append((18*self.kk[2][1] + 15*self.kk[2][0] + 28*self.kk[3][0] + 42*self.kk[3][1] + 6*self.kk[3][2])/109)
         
 class GlobalList:
     def __init__(self):
