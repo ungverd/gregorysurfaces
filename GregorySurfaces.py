@@ -50,7 +50,7 @@ def on_depsgraph_update(scene):
                     if update.is_updated_geometry:
                         on_curve_edit_mode(bpy.context.active_object)
         elif now_mode == "OBJECT":
-            verify_curve_deleted()
+            verify_curve_deleted_or_returned()
         if now_mode != mode[0]:
             mode[0] = now_mode
 
@@ -73,7 +73,7 @@ def on_curve_edit_mode(curve_obj: bpy.types.Object):
     preserve_coplanar(curve_obj)
     preserve_collinear(curve_obj)
 
-def verify_curve_deleted():
+def verify_curve_deleted_or_returned():
     for collection in bpy.data.collections:
         if collection.greg_settings.used_for_greg:
             for setting in collection.greg_settings.curves:
@@ -82,6 +82,68 @@ def verify_curve_deleted():
                     if not bpy.context.scene.objects.get(curve_obj.name):
                         remove_curve_from_greg_structure(curve_obj, collection)
                         bpy.data.objects.remove(curve_obj, do_unlink=True)
+                    else:
+                        settings = curve_obj.greg_curve_settings
+                        for i, (end_name, end_empty) in enumerate(((settings.end1_name, settings.end1_empty),
+                                                                   (settings.end2_name, settings.end2_empty))):
+                            if end_empty.greg_empty_settings.curve_ends.find(end_name) == -1:
+                                repare_end(curve_obj, end_empty, end_name, i)
+                                
+def repare_end(curve_obj, empty_obj, end_name, i):
+    #is_coplanar = verify_coplanar(empty_obj, curve_obj, i)
+    collinear_end = verify_collinear(empty_obj, curve_obj, i)
+    setting = empty_obj.greg_empty_settings.curve_ends.add()
+    setting.basic_end.end = i
+    setting.basic_end.name = end_name
+    setting.basic_end.curve = curve_obj
+    setting.name = end_name
+    setting.empty = empty_obj
+    if collinear_end is not None:
+        setting.is_collinear = True
+        c1 = setting.collinear_to.add()
+        c1.name = collinear_end.name
+        c1.curve = collinear_end.basic_end.curve
+        c1.end = collinear_end.basic_end.end
+        collinear_end.is_collinear = True
+        for other_basic_end in collinear_end.collinear_to:
+            c1 = setting.collinear_to.add()
+            c1.name = other_basic_end.name
+            c1.curve = other_basic_end.curve
+            c1.end = other_basic_end.end
+            other_end = empty_obj.greg_empty_settings.curve_ends[other_basic_end.name]
+            c2 = other_end.collinear_to.add()
+            c2.end = i
+            c2.name = end_name
+            c2.curve = curve_obj
+        c3 = collinear_end.collinear_to.add()
+        c3.end = i
+        c3.name = end_name
+        c3.curve = curve_obj
+        
+    
+def verify_collinear(empty, curve, i):
+    p = curve.data.splines[0].bezier_points[i]
+    co = p.co
+    h = p.handle_right if i == 0 else p.handle_left
+    hh = h - co
+    for end in empty.greg_empty_settings.curve_ends:
+        curve2 = end.basic_end.curve
+        i2 = end.basic_end.end
+        p2 = curve2.data.splines[0].bezier_points[i2]
+        co2 = p2.co
+        h2 = p2.handle_right if i2 == 0 else p2.handle_left
+        hh2 = h2 - co2
+        if are_collinear(hh, hh2):
+            return end
+    return None
+
+'''def verify_coplanar(empty, curve, i):
+    p = curve.data.splines[0].bezier_points[i]
+    co = p.co
+    h = p.handle_right if i == 0 else p.handle_left
+    hh = h - co
+    for end in empty.greg_empty_settings.curve_ends:'''
+
 
 def preserve_points(curve_obj):
     # edit mode
@@ -141,6 +203,7 @@ def preserve_collinear(curve_obj):
                 else:
                     oh = op.handle_left - op.co
                     oh2 = op.handle_right - op.co
+
                 if not are_collinear(h, oh):
                     quat = oh.rotation_difference(h)
                     if quat.angle > math.pi / 2:
@@ -152,11 +215,36 @@ def preserve_collinear(curve_obj):
                     oh2.rotate(quat)
                     if other_i == 0:
                         op.handle_right = oh + op.co
-                        op.handle_left = oh2 + op.co
+                        if op.handle_right_type == "ALIGNED":
+                            op.handle_left = oh2 + op.co
                     else:
                         op.handle_left = oh + op.co
-                        op.handle_right = oh2 + op.co
-                
+                        if op.handle_left_type == "ALIGNED":
+                            op.handle_right = oh2 + op.co
+
+def preserve_coplanar_to_two_planes(end):
+    if len(end.coplanar_vectors) == 2:
+        arrow1 = end.coplanar_vectors[0].arrow
+        arrow2 = end.coplanar_vectors[1].arrow
+        if bpy.context.mode == "OBJECT":
+            mat1 = arrow1.matrix_local.copy()
+            mat2 = arrow2.matrix_local.copy()
+        if bpy.context.mode == "EDIT_CURVE":
+            mat1 = arrow1.matrix_world.copy()
+            mat2 = arrow2.matrix_world.copy()
+        mat1.invert()
+        vec1 = mathutils.Vector((0,0,1)) @ mat1
+        mat2.invert()
+        vec2 = mathutils.Vector((0,0,1)) @ mat2
+        cross = vec1.cross(vec2)
+        spline = end.basic_end.curve.data.splines[0]
+        i = end.basic_end.end
+        p = spline.bezier_points[i]
+        if i == 0:
+            h = p.handle_right - p.co
+        else:
+            h = p.handle_left - p.co
+
 #**************************************************************************
 try:
     #raise(ModuleNotFoundError)
@@ -1868,6 +1956,36 @@ class GlobalList:
             for end in empty_obj.greg_empty_settings.curve_ends:
                 add_hook(end, context)
 
+def print_structure(collection):
+    print("collection greg", collection.greg_settings.used_for_greg)
+    for item in collection.greg_settings.empties:
+        print("empty", item.name)
+        print("used",  item.empty.greg_empty_settings.used_for_greg)
+        print("name again",  item.empty.greg_empty_settings.name)
+        print("ends")
+        for end in item.empty.greg_empty_settings.curve_ends:
+            print("    name", end.name)
+            print("    basic end name", end.basic_end.name)
+            print("    basic end curve name", end.basic_end.curve.greg_curve_settings.name)
+            print("    basic end i", end.basic_end.end)
+            print("    empty name", end.empty.greg_empty_settings.name)
+            print("    is coplanar", end.is_coplanar)
+            print("    len coplanar vectors", len(end.coplanar_vectors))
+            print("    is collinear", end.is_collinear)
+            print("    len collinear_to", len(end.collinear_to))
+            for basic_end in end.collinear_to:
+                print("        collinear name", basic_end.name)
+                print("        collinear curve name", basic_end.curve.greg_curve_settings.name)
+                print("        collinear i", basic_end.end)
+            print("    hook", end.hook)
+    for item in collection.greg_settings.curves:
+        print("curve", item.name)
+        print("used",  item.curve.greg_curve_settings.used_for_greg)
+        print("end1", item.curve.greg_curve_settings.end1_name)
+        print("end1_empty", item.curve.greg_curve_settings.end1_empty.greg_empty_settings.name)
+        print("end2", item.curve.greg_curve_settings.end2_name)
+        print("end2_empty", item.curve.greg_curve_settings.end2_empty.greg_empty_settings.name)
+
 def coplanar_collinear(empty: bpy.types.Object, collection: bpy.types.Collection):
     for i, end1 in enumerate(empty.greg_empty_settings.curve_ends):
         for end2 in empty.greg_empty_settings.curve_ends[:i]:
@@ -1942,49 +2060,53 @@ def check_ends_coplanar(ends1, ends2, ends3, empty, collection: bpy.types.Collec
     return None
 
 def add_coplanar_arrow(set_ends, coplanar_vector: mathutils.Vector, empty: bpy.types.Object, collection: bpy.types.Collection):
-    name = get_next_id(collection)
-    arrow = bpy.data.objects.new("greg_arrow", None)
-    arrow.greg_arrow_settings.name = name
-    arrow.greg_arrow_settings.used_for_greg = True
-    empty_arrow_settings = empty.greg_empty_settings.coplanars.add()
-    empty_arrow_settings.name = name
-    empty_arrow_settings.arrow = arrow
-    collection_arrow_settings = collection.greg_settings.arrows.add()
-    collection_arrow_settings.name = name
-    collection_arrow_settings.arrow = arrow
-    arrow.parent = empty
-    arrow.empty_display_type = "SINGLE_ARROW"
-    collection.objects.link(arrow)
-    vec = mathutils.Vector((0,0,1)) @ arrow.matrix_parent_inverse
-    vec.normalize()
-    #vec = mathutils.Vector((0,0,1))
-    quat = vec.rotation_difference(coplanar_vector)
-    arrow.rotation_mode = "QUATERNION"
-    arrow.rotation_quaternion = quat
-    constraint = arrow.constraints.new(type="LIMIT_LOCATION")
-    constraint.owner_space = "LOCAL"
-    constraint.max_x = 0
-    constraint.max_y = 0
-    constraint.max_z = 0
-    constraint.min_x = 0
-    constraint.min_y = 0
-    constraint.min_z = 0
-    constraint.use_max_x = True
-    constraint.use_max_y = True
-    constraint.use_max_z = True
-    constraint.use_min_x = True
-    constraint.use_min_y = True
-    constraint.use_min_z = True
-    constraint.enabled = True
+    feasible = True
     for end in set_ends:
-        end.is_coplanar = True
-        end_setting = end.coplanar_vectors.add()
-        end_setting.arrow = arrow
-        end_setting.name = name
-        arrow_setting = arrow.greg_arrow_settings.coplanars.add()
-        arrow_setting.name = end.name
-        arrow_setting.curve = end.basic_end.curve
-        arrow_setting.end = end.basic_end.end
+        if len(end.coplanar_vectors) >= 2:
+            feasible = False
+    if feasible:
+        name = get_next_id(collection)
+        arrow = bpy.data.objects.new("greg_arrow", None)
+        arrow.greg_arrow_settings.name = name
+        arrow.greg_arrow_settings.used_for_greg = True
+        empty_arrow_settings = empty.greg_empty_settings.coplanars.add()
+        empty_arrow_settings.name = name
+        empty_arrow_settings.arrow = arrow
+        collection_arrow_settings = collection.greg_settings.arrows.add()
+        collection_arrow_settings.name = name
+        collection_arrow_settings.arrow = arrow
+        arrow.parent = empty
+        arrow.empty_display_type = "SINGLE_ARROW"
+        collection.objects.link(arrow)
+        vec = mathutils.Vector((0,0,1)) @ arrow.matrix_parent_inverse
+        vec.normalize()
+        quat = vec.rotation_difference(coplanar_vector)
+        arrow.rotation_mode = "QUATERNION"
+        arrow.rotation_quaternion = quat
+        constraint = arrow.constraints.new(type="LIMIT_LOCATION")
+        constraint.owner_space = "LOCAL"
+        constraint.max_x = 0
+        constraint.max_y = 0
+        constraint.max_z = 0
+        constraint.min_x = 0
+        constraint.min_y = 0
+        constraint.min_z = 0
+        constraint.use_max_x = True
+        constraint.use_max_y = True
+        constraint.use_max_z = True
+        constraint.use_min_x = True
+        constraint.use_min_y = True
+        constraint.use_min_z = True
+        constraint.enabled = True
+        for end in set_ends:
+            end.is_coplanar = True
+            end_setting = end.coplanar_vectors.add()
+            end_setting.arrow = arrow
+            end_setting.name = name
+            arrow_setting = arrow.greg_arrow_settings.coplanars.add()
+            arrow_setting.name = end.name
+            arrow_setting.curve = end.basic_end.curve
+            arrow_setting.end = end.basic_end.end
    
 def get_next_id(collection: bpy.types.Collection):
     name = str(collection.greg_settings.max_id)
@@ -2001,7 +2123,7 @@ def add_hook(end, context: Optional[bpy.types.Context]=None):
             empty_to_link = end.coplanar_vectors[0].arrow
         else:
             empty_to_link = end.empty
-        hook = curve_obj.modifiers.new(name=f"{curve_obj.name}_{empty_to_link.name}", type='HOOK')
+        hook = curve_obj.modifiers.new(name=f"hook_{curve_obj.name}_{empty_to_link.name}", type='HOOK')
         hook.vertex_indices_set([i*3, i*3+1, i*3+2])
         context.evaluated_depsgraph_get()
         hook.object = empty_to_link
@@ -2034,6 +2156,9 @@ def get_coplanar_groups_num(arrow: bpy.types.Object):
     return counter
 
 def remove_curve_from_greg_structure(curve_obj: bpy.types.Object, collection: Optional[bpy.types.Collection] = None):
+    print("before remove")
+    print_structure(collection)
+    print("****************************")
     #requires Object mode
     curve_obj.greg_curve_settings.used_for_greg = False
     curve_name = curve_obj.greg_curve_settings.name
@@ -2044,9 +2169,10 @@ def remove_curve_from_greg_structure(curve_obj: bpy.types.Object, collection: Op
     end1_name = curve_obj.greg_curve_settings.end1_name
     end2_name = curve_obj.greg_curve_settings.end2_name
     for empty, end_name in ((end1_empty, end1_name), (end2_empty, end2_name)):
+        print("some ends", [end.name for end in empty.greg_empty_settings.curve_ends])
         end = empty.greg_empty_settings.curve_ends[end_name]
         apply_hook(end)
-        empty_name = empty.name
+        empty_name = empty.greg_empty_settings.name
         if end.is_collinear:
             for other_basic_end in end.collinear_to:
                 other_end = empty.greg_empty_settings.curve_ends[other_basic_end.name]
@@ -2088,6 +2214,9 @@ def remove_curve_from_greg_structure(curve_obj: bpy.types.Object, collection: Op
     curve_obj.greg_curve_settings.end2_empty = None
     curve_obj.greg_curve_settings.end1_name = ""
     curve_obj.greg_curve_settings.end2_name = ""
+    print("after remove")
+    print_structure(collection)
+    print("****************************")
 
 def copy_transforms(active: bpy.types.Object, new: bpy.types.Object):
     new.rotation_euler = active.rotation_euler
