@@ -73,6 +73,26 @@ def on_curve_edit_mode(curve_obj: bpy.types.Object):
     preserve_points(curve_obj)
     preserve_coplanar(curve_obj)
     preserve_collinear(curve_obj)
+    if curve_obj.greg_curve_settings.is_mirror_bridge:
+        preserve_mirror_bridge(curve_obj)
+
+def preserve_mirror_bridge(curve_obj):
+    if curve_obj.greg_curve_settings.bridge_mirror_other_i == 0:
+        p_other = curve_obj.data.splines[0].bezier_points[0]
+        p_target = curve_obj.data.splines[0].bezier_points[1]
+    elif curve_obj.greg_curve_settings.bridge_mirror_other_i == 1:
+        p_other = curve_obj.data.splines[0].bezier_points[1]
+        p_target = curve_obj.data.splines[0].bezier_points[0]
+    print("mirror!")
+    handle_left = mirror_vec(p_target.handle_right,
+                                     curve_obj.greg_curve_settings.bridge_mirror_object,
+                                     curve_obj.greg_curve_settings.bridge_mirror_axis)
+    handle_right = mirror_vec(p_target.handle_left,
+                                      curve_obj.greg_curve_settings.bridge_mirror_object,
+                                      curve_obj.greg_curve_settings.bridge_mirror_axis)
+    print(handle_left, handle_right)
+    p_other.handle_left = handle_left
+    p_other.handle_right = handle_right
 
 def verify_arrow_returned(collection):
     for setting in collection.greg_settings.arrows:
@@ -103,8 +123,6 @@ def verify_curve_deleted_or_returned():
                         for i, (end_name, end_empty) in enumerate(((settings.end1_name, settings.end1_empty),
                                                                    (settings.end2_name, settings.end2_empty))):
                             if end_empty.greg_empty_settings.curve_ends.find(end_name) == -1:
-                                if end_empty.greg_empty_settings.name == "96":
-                                    print("repare empty 96")
                                 repare_end(curve_obj, end_empty, end_name, i)
                                 repare_hooks(end_empty)
                                 
@@ -258,8 +276,8 @@ def preserve_points(curve_obj):
     spline = curve_obj.data.splines[0]
     settings = curve_obj.greg_curve_settings
     for i, empty in enumerate((settings.end1_empty, settings.end2_empty)):
-        if (spline.bezier_points[i].co - empty.location).length_squared > TH2:
-            spline.bezier_points[i].co = empty.location
+        if (spline.bezier_points[i].co - empty.matrix_world.translation).length_squared > TH2:
+            spline.bezier_points[i].co = empty.matrix_world.translation
 
 def rotate_end_to_vec(vec, basic_end):
     spline = basic_end.curve.data.splines[0]
@@ -2415,7 +2433,7 @@ def mirror_vec(vec, mirror_object, axis): #axis: 0 - x, 1 - y, 2 - z
         mat.invert()
         mirror = basic_vec @ mat
         reflected = vec.reflect(mirror)
-        delta_vec = mirror_object.location.project(mirror)
+        delta_vec = mirror_object.matrix_world.translation.project(mirror)
         return reflected + 2*delta_vec
     else:
         return vec.reflect(basic_vec)
@@ -2568,9 +2586,9 @@ class NewGlobalList:
     @staticmethod
     def calculate_midpoint(curve_obj):
         curve_settings = curve_obj.greg_curve_settings
-        p0 = curve_settings.end1_empty.location
+        p0 = curve_settings.end1_empty.matrix_world.translation
         p1 = curve_obj.data.splines[0].bezier_points[0].handle_right
-        p3 = curve_settings.end2_empty.location
+        p3 = curve_settings.end2_empty.matrix_world.translation
         p2 = curve_obj.data.splines[0].bezier_points[1].handle_left
         return 1/8 * (p0 + 3*p1 + 3*p2 + p3)
     
@@ -3234,6 +3252,9 @@ class GregCurve(bpy.types.PropertyGroup):
     not_face_ids: bpy.props.CollectionProperty(type=GregId)
     phantom_curves_ids: bpy.props.CollectionProperty(type=GregId)
     is_mirror_bridge: bpy.props.BoolProperty(default=False)
+    bridge_mirror_object: bpy.props.PointerProperty(type=bpy.types.Object)
+    bridge_mirror_axis: bpy.props.IntProperty(default=0)
+    bridge_mirror_other_i: bpy.props.IntProperty(default=0)
 
 #**************************************************************************
 
@@ -3505,8 +3526,8 @@ def check_curve_crosses_mirror(obj):
     for i, modifier in enumerate(obj.modifiers):
         if modifier.type == 'MIRROR':
             if p1 is None:
-                p1 = obj.greg_curve_settings.end1_empty.location
-                p2 = obj.greg_curve_settings.end2_empty.location
+                p1 = obj.greg_curve_settings.end1_empty.matrix_world.translation
+                p2 = obj.greg_curve_settings.end2_empty.matrix_world.translation
             mirror_object = modifier.mirror_object
             for axis in range(3):
                 if modifier.use_axis[axis]:
@@ -3516,7 +3537,7 @@ def check_curve_crosses_mirror(obj):
                         mat = mirror_object.matrix_world.copy()
                         mat.invert()
                         normal = normal @ mat
-                        pos = mirror_object.location
+                        pos = mirror_object.matrix_world.translation
                     else:
                         pos = mathutils.Vector((0,0,0))
                     q1 = normal.dot(pos - p1)
@@ -3603,11 +3624,13 @@ class MakeCurveMirrorBridge(bpy.types.Operator):
             other_end_name = curve.greg_curve_settings.end2_name
             target_point = curve.data.splines[0].bezier_points[0]
             other_point = curve.data.splines[0].bezier_points[1]
+            other_i = 1
         elif target == curve.greg_curve_settings.end2_empty:
             target_end_name = curve.greg_curve_settings.end2_name
             other_end_name = curve.greg_curve_settings.end1_name
             target_point = curve.data.splines[0].bezier_points[1]
             other_point = curve.data.splines[0].bezier_points[0]
+            otrer_i = 0
         end1 = target.greg_empty_settings.curve_ends[target_end_name]
         end2 = other.greg_empty_settings.curve_ends[other_end_name]
         apply_hook(end1)
@@ -3617,6 +3640,9 @@ class MakeCurveMirrorBridge(bpy.types.Operator):
         add_hook(end1)
         add_hook(end2)
         curve.greg_curve_settings.is_mirror_bridge = True
+        curve.greg_curve_settings.bridge_mirror_object = mirror_obj
+        curve.greg_curve_settings.bridge_mirror_axis = axis
+        curve.greg_curve_settings.bridge_mirror_other_i = other_i
         return {'FINISHED'}    
 
 def add_bridge_mirror_func(self, context: bpy.types.Context):
