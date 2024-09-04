@@ -83,16 +83,12 @@ def preserve_mirror_bridge(curve_obj):
     elif curve_obj.greg_curve_settings.bridge_mirror_other_i == 1:
         p_other = curve_obj.data.splines[0].bezier_points[1]
         p_target = curve_obj.data.splines[0].bezier_points[0]
-    print("mirror!")
-    handle_left = mirror_vec(p_target.handle_right,
+    p_other.handle_left = mirror_vec(p_target.handle_right,
                                      curve_obj.greg_curve_settings.bridge_mirror_object,
                                      curve_obj.greg_curve_settings.bridge_mirror_axis)
-    handle_right = mirror_vec(p_target.handle_left,
+    p_other.handle_right = mirror_vec(p_target.handle_left,
                                       curve_obj.greg_curve_settings.bridge_mirror_object,
                                       curve_obj.greg_curve_settings.bridge_mirror_axis)
-    print(handle_left, handle_right)
-    p_other.handle_left = handle_left
-    p_other.handle_right = handle_right
 
 def verify_arrow_returned(collection):
     for setting in collection.greg_settings.arrows:
