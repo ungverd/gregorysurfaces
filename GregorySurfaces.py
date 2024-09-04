@@ -3279,7 +3279,7 @@ def add_one_curve(curves, is_added, now_curve, end_to_add):
                 return is_added, curve, new_end
     return False
 
-def verify_is_closed_path(curves):
+'''def verify_is_closed_path(curves):
     is_added = {curve.greg_curve_settings.name: False for curve in curves}
     first_curve = curves[0]
     first_empty = first_curve.greg_curve_settings.end1_empty
@@ -3302,7 +3302,7 @@ def verify_is_closed_path(curves):
         return False
     if possible_curves[first_curve_name] == 0:
         return False
-    return True
+    return True'''
 
 def print_end(end):
     print("end:")
@@ -3626,7 +3626,7 @@ class MakeCurveMirrorBridge(bpy.types.Operator):
             other_end_name = curve.greg_curve_settings.end1_name
             target_point = curve.data.splines[0].bezier_points[1]
             other_point = curve.data.splines[0].bezier_points[0]
-            otrer_i = 0
+            other_i = 0
         end1 = target.greg_empty_settings.curve_ends[target_end_name]
         end2 = other.greg_empty_settings.curve_ends[other_end_name]
         apply_hook(end1)
@@ -3696,7 +3696,7 @@ class PrintDotInfo(bpy.types.Operator):
 def add_print_dot_func(self, context: bpy.types.Context):
     self.layout.operator(PrintDotInfo.bl_idname)        
 
-class SetNotFace(bpy.types.Operator):
+'''class SetNotFace(bpy.types.Operator):
     """Gregory: set loop of curves not face"""
     bl_idname = "object.greg_set_not_face"
     bl_label = "Set loop not face"         # Display name in the interface.
@@ -3733,7 +3733,7 @@ class SetNotFace(bpy.types.Operator):
         return {'FINISHED'}
 
 def set_not_face_menu_func(self, context: bpy.types.Context):
-    self.layout.operator(SetNotFace.bl_idname)
+    self.layout.operator(SetNotFace.bl_idname)'''
 
 class CreateCurvesCollection(bpy.types.Operator):
     """Gregory: create curves"""      # Use this as a tooltip for menu items and buttons.
@@ -3830,8 +3830,8 @@ def register():
     bpy.types.VIEW3D_MT_object.append(add_collection_menu_func)
     bpy.utils.register_class(CreateSurfacesBetweenCurves)
     bpy.types.VIEW3D_MT_object.append(add_surface_menu_func)  # Adds the new operator to an existing menu.
-    bpy.utils.register_class(SetNotFace)
-    bpy.types.VIEW3D_MT_object_context_menu.append(set_not_face_menu_func)  # Adds the new operator to an existing menu.
+    #bpy.utils.register_class(SetNotFace)
+    #bpy.types.VIEW3D_MT_object_context_menu.append(set_not_face_menu_func)  # Adds the new operator to an existing menu.
     bpy.utils.register_class(PrintItemInfo)
     bpy.types.VIEW3D_MT_object_context_menu.append(add_print_info_func)
     bpy.utils.register_class(MakeCurveMirrorBridge)
@@ -3851,7 +3851,7 @@ def unregister():
     bpy.utils.unregister_class(PrintDotInfo)
     bpy.utils.unregister_class(MakeCurveMirrorBridge)
     bpy.utils.unregister_class(PrintItemInfo)
-    bpy.utils.unregister_class(SetNotFace)
+    #bpy.utils.unregister_class(SetNotFace)
     bpy.utils.unregister_class(CreateSurfacesBetweenCurves)
 
     bpy.utils.unregister_class(GregCurve)
