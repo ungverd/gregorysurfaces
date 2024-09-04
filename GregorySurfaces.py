@@ -2945,9 +2945,9 @@ class NewGlobalList:
 
 
     
-    def add_bpoint_if_needed(self, co, original_name):
+    def add_bpoint_if_needed(self, co, original_name, mirror_other_name):
         for phantom_bpoint in self.collection.greg_settings.phantom_bpoints:
-            if phantom_bpoint.original_empty_name == original_name:
+            if phantom_bpoint.original_empty_name in (original_name, mirror_other_name):
                 if same_coords(co, phantom_bpoint.co):
                     return phantom_bpoint
         new_bpoint = self.collection.greg_settings.phantom_bpoints.add()
@@ -2958,8 +2958,12 @@ class NewGlobalList:
         return new_bpoint # DANGER! Do not create next bpoint while this is saved somewhere in Blender
     
     def add_phantom_curve(self, co1, co2, handle1, handle2, original_curve_obj, mirrored):
-        empty1_name = original_curve_obj.greg_curve_settings.end1_empty.greg_empty_settings.name
-        empty2_name = original_curve_obj.greg_curve_settings.end2_empty.greg_empty_settings.name
+        empty1_settings = original_curve_obj.greg_curve_settings.end1_empty.greg_empty_settings
+        empty2_settings = original_curve_obj.greg_curve_settings.end2_empty.greg_empty_settings
+        empty1_name = empty1_settings.name
+        empty2_name = empty2_settings.name
+        empty1_mirror_bridge_other_name = empty1_settings.mirror_bridge_other_name
+        empty2_mirror_bridge_other_name = empty2_settings.mirror_bridge_other_name
         phantom_curve = self.collection.greg_settings.phantom_curves.add()
         phantom_curve.name = str(self.ids_counter)
         self.ids_counter += 1
@@ -2971,10 +2975,10 @@ class NewGlobalList:
         end_names = []
         for i in range(2):
             if i == 0:
-                bpoint = self.add_bpoint_if_needed(co1, empty1_name)
+                bpoint = self.add_bpoint_if_needed(co1, empty1_name, empty1_mirror_bridge_other_name)
                 phantom_curve.bpoint1_name = bpoint.name
             else:
-                bpoint = self.add_bpoint_if_needed(co2, empty2_name)
+                bpoint = self.add_bpoint_if_needed(co2, empty2_name, empty2_mirror_bridge_other_name)
                 phantom_curve.bpoint2_name = bpoint.name
             end = bpoint.ends.add()
             end.name = str(self.ids_counter)
@@ -3237,6 +3241,7 @@ class GregEmpty(bpy.types.PropertyGroup):
     used_for_greg: bpy.props.BoolProperty(default=False)
     coplanars: bpy.props.CollectionProperty(type=GregArrowItem)
     name: bpy.props.StringProperty(default="")
+    mirror_bridge_other_name: bpy.props.StringProperty(default="")
 
 class GregCurve(bpy.types.PropertyGroup):
     used_for_greg: bpy.props.BoolProperty(default=False)
@@ -3627,6 +3632,8 @@ class MakeCurveMirrorBridge(bpy.types.Operator):
             target_point = curve.data.splines[0].bezier_points[1]
             other_point = curve.data.splines[0].bezier_points[0]
             other_i = 0
+        target.greg_empty_settings.mirror_bridge_other_name = other.greg_empty_settings.name
+        other.greg_empty_settings.mirror_bridge_other_name = target.greg_empty_settings.name
         end1 = target.greg_empty_settings.curve_ends[target_end_name]
         end2 = other.greg_empty_settings.curve_ends[other_end_name]
         apply_hook(end1)
@@ -3783,6 +3790,10 @@ class CreateSurfacesBetweenCurves(bpy.types.Operator):
         glist = NewGlobalList(collection)
         glist.prepare_for_greg()
         glist.add_curves_and_bpoints()
+        print("curves", len(collection.greg_settings.phantom_curves))
+        print("bpoints", len(collection.greg_settings.phantom_bpoints))
+        for bpoint in collection.greg_settings.phantom_bpoints:
+            print(bpoint.co)
         glist.add_quads()
         glist.calculate_kk()
         new = glist.render_mesh(d, collection.name, context)
