@@ -3617,6 +3617,8 @@ class MakeCurveMirrorBridge(bpy.types.Operator):
             return False
         if not obj.greg_curve_settings.used_for_greg:
             return False
+        if obj.greg_curve_settings.is_mirror_bridge:
+            return False
         selection = context.selected_objects
         if len(selection) != 2:
             return False
