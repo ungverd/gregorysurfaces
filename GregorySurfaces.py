@@ -2070,6 +2070,21 @@ class GlobalList:
             curve_obj = bpy.data.objects.new(name="greg_curve_obj", object_data=curve)
             curve_obj.greg_curve_settings.used_for_greg = True
             curve_obj.greg_curve_settings.name = get_next_id(collection)
+            constraint = curve_obj.constraints.new(type="LIMIT_LOCATION")
+            constraint.owner_space = "WORLD"
+            constraint.max_x = 0
+            constraint.max_y = 0
+            constraint.max_z = 0
+            constraint.min_x = 0
+            constraint.min_y = 0
+            constraint.min_z = 0
+            constraint.use_max_x = True
+            constraint.use_max_y = True
+            constraint.use_max_z = True
+            constraint.use_min_x = True
+            constraint.use_min_y = True
+            constraint.use_min_z = True
+            constraint.enabled = True
             curve_prop = collection.greg_settings.curves.add()
             curve_prop.name = curve_obj.greg_curve_settings.name
             curve_prop.curve = curve_obj
@@ -2365,7 +2380,7 @@ def remove_curve_from_greg_structure(curve_obj: bpy.types.Object, collection: Op
     end1_name = curve_obj.greg_curve_settings.end1_name
     end2_name = curve_obj.greg_curve_settings.end2_name
     for empty, end_name in ((end1_empty, end1_name), (end2_empty, end2_name)):
-        print("some ends", [end.name for end in empty.greg_empty_settings.curve_ends])
+        #print("some ends", [end.name for end in empty.greg_empty_settings.curve_ends])
         end = empty.greg_empty_settings.curve_ends[end_name]
         apply_hook(end)
         empty_name = empty.greg_empty_settings.name
@@ -3547,7 +3562,7 @@ def check_curve_crosses_mirror(obj):
                         return i, axis
     return False
 
-def add_mirror_empty_constraints(empty, target, mirror_object, axis):
+def add_mirror_empty_constraints(empty, target, mirror_object, axis, curve_name):
     constraint = empty.constraints.new('COPY_LOCATION')
     if mirror_object:
         constraint.owner_space = 'CUSTOM'
@@ -3564,6 +3579,7 @@ def add_mirror_empty_constraints(empty, target, mirror_object, axis):
     elif axis == 2:
         constraint.invert_z = True
     constraint.target = target
+    constraint.name = f"copy_location_{curve_name}"
 
     constraint2 = empty.constraints.new('COPY_ROTATION')
     if mirror_object:
@@ -3584,6 +3600,7 @@ def add_mirror_empty_constraints(empty, target, mirror_object, axis):
         constraint2.invert_x = True
         constraint2.invert_y = True
     constraint2.target = target
+    constraint2.name = f"copy_rotation_{curve_name}"
 
 class MakeCurveMirrorBridge(bpy.types.Operator):
     """Gregory: make curve a bridge through mirror"""
@@ -3619,7 +3636,8 @@ class MakeCurveMirrorBridge(bpy.types.Operator):
         target = [sel for sel in context.selected_objects if sel != curve][0]
         two_empties = (curve.greg_curve_settings.end1_empty, curve.greg_curve_settings.end2_empty)
         other = [empty for empty in two_empties if empty != target][0]
-        add_mirror_empty_constraints(other, target, mirror_obj, axis)
+        curve_name = curve.greg_curve_settings.name
+        add_mirror_empty_constraints(other, target, mirror_obj, axis, curve_name)
         if target == curve.greg_curve_settings.end1_empty:
             target_end_name = curve.greg_curve_settings.end1_name
             other_end_name = curve.greg_curve_settings.end2_name
@@ -3650,6 +3668,50 @@ class MakeCurveMirrorBridge(bpy.types.Operator):
 
 def add_bridge_mirror_func(self, context: bpy.types.Context):
     self.layout.operator(MakeCurveMirrorBridge.bl_idname)
+    
+class UnsetCurveMirrorBridge(bpy.types.Operator):
+    """Gregory: unset curve a bridge through mirror"""
+    bl_idname = "object.unset_curve_mirror_bridge"
+    bl_label = "Unset curve bridge through mirror"         # Display name in the interface.
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context):
+        if context.mode != "OBJECT":
+            return False
+        obj = context.active_object
+        if obj is None:
+            return False
+        return obj.greg_curve_settings.is_mirror_bridge
+
+    def execute(self, context: bpy.types.Context):        # execute() is called when running the operator.
+        curve = context.active_object
+        curve_settings = curve.greg_curve_settings
+        curve_settings.is_mirror_bridge = False
+        curve_settings.bridge_mirror_object = None
+        curve_settings.bridge_mirror_axis = 0
+        if curve_settings.bridge_mirror_other_i == 0:
+            other = curve_settings.end1_empty
+            target = curve_settings.end2_empty
+        elif curve_settings.bridge_mirror_other_i == 1:
+            other = curve_settings.end2_empty
+            target = curve_settings.end1_empty
+        curve_settings.bridge_mirror_other_i = 0
+        other.greg_empty_settings.mirror_bridge_other_name = ""
+        target.greg_empty_settings.mirror_bridge_other_name = ""
+        curve_name = curve_settings.name
+        for constraint in other.constraints:
+            if constraint.name == f"copy_location_{curve_name}":
+                other.constraints.remove(constraint)
+                break
+        for constraint in other.constraints:
+            if constraint.name == f"copy_rotation_{curve_name}":
+                other.constraints.remove(constraint)
+                break
+        return {'FINISHED'}    
+
+def add_unset_bridge_mirror_func(self, context: bpy.types.Context):
+    self.layout.operator(UnsetCurveMirrorBridge.bl_idname)
     
 class PrintDotInfo(bpy.types.Operator):
     """Gregory: print info about selected curve, arrow or empty"""
@@ -3790,10 +3852,6 @@ class CreateSurfacesBetweenCurves(bpy.types.Operator):
         glist = NewGlobalList(collection)
         glist.prepare_for_greg()
         glist.add_curves_and_bpoints()
-        print("curves", len(collection.greg_settings.phantom_curves))
-        print("bpoints", len(collection.greg_settings.phantom_bpoints))
-        for bpoint in collection.greg_settings.phantom_bpoints:
-            print(bpoint.co)
         glist.add_quads()
         glist.calculate_kk()
         new = glist.render_mesh(d, collection.name, context)
@@ -3846,7 +3904,9 @@ def register():
     bpy.utils.register_class(PrintItemInfo)
     bpy.types.VIEW3D_MT_object_context_menu.append(add_print_info_func)
     bpy.utils.register_class(MakeCurveMirrorBridge)
-    bpy.types.VIEW3D_MT_object_context_menu.append(add_bridge_mirror_func)  # Adds the new operator to an existing menu.
+    bpy.types.VIEW3D_MT_object_context_menu.append(add_bridge_mirror_func)
+    bpy.utils.register_class(UnsetCurveMirrorBridge)
+    bpy.types.VIEW3D_MT_object_context_menu.append(add_unset_bridge_mirror_func)
     bpy.utils.register_class(PrintDotInfo)
     bpy.types.VIEW3D_MT_object_context_menu.append(add_print_dot_func)
     bpy.utils.register_class(OBJECT_PT_greg_curve_properties)
@@ -3860,6 +3920,7 @@ def unregister():
     bpy.utils.unregister_class(OBJECT_PT_greg_curve_properties1)
     bpy.utils.unregister_class(OBJECT_PT_greg_curve_properties)
     bpy.utils.unregister_class(PrintDotInfo)
+    bpy.utils.unregister_class(UnsetCurveMirrorBridge)
     bpy.utils.unregister_class(MakeCurveMirrorBridge)
     bpy.utils.unregister_class(PrintItemInfo)
     #bpy.utils.unregister_class(SetNotFace)
