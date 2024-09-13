@@ -23,7 +23,7 @@ bl_info = {
 }
 
 from inspect import getouterframes, currentframe
-import itertools
+from itertools import chain
 import bpy
 import bmesh
 import mathutils
@@ -1100,13 +1100,7 @@ def make_collinear(v1: mathutils.Vector, v2: mathutils.Vector):
     return new_v1, new_v2
 
 
-class MiddlePoint:
-    def __init__(self, co: mathutils.Vector):
-        self.co = co
-        self.handle_up: mathutils.Vector
-        self.handle_down: mathutils.Vector
-        self.handle_left: mathutils.Vector
-        self.handle_right: mathutils.Vector
+
 
 
 class BigQuad:
@@ -2057,63 +2051,17 @@ class GlobalList:
         collection.greg_settings.used_for_greg = True
         parent_collection.children.link(collection)
         for segment in self.segments:
-            curve = bpy.data.curves.new(name="greg_curve", type="CURVE")
-            curve.dimensions = "3D"
-            spline = curve.splines.new("BEZIER")
-            spline.bezier_points.add(1)
-            for i, p in enumerate((segment.p1, segment.p2)):
-                spline.bezier_points[i].co = p.bpoint.coords
-                spline.bezier_points[i].handle_left = p.bpoint.coords + p.handle_left
-                spline.bezier_points[i].handle_right = p.bpoint.coords + p.handle_right
-                spline.bezier_points[i].handle_left_type = "ALIGNED"
-                spline.bezier_points[i].handle_right_type = "ALIGNED"
-            curve_obj = bpy.data.objects.new(name="greg_curve_obj", object_data=curve)
-            curve_obj.greg_curve_settings.used_for_greg = True
-            curve_obj.greg_curve_settings.name = get_next_id(collection)
-            constraint = curve_obj.constraints.new(type="LIMIT_LOCATION")
-            constraint.owner_space = "WORLD"
-            constraint.max_x = 0
-            constraint.max_y = 0
-            constraint.max_z = 0
-            constraint.min_x = 0
-            constraint.min_y = 0
-            constraint.min_z = 0
-            constraint.use_max_x = True
-            constraint.use_max_y = True
-            constraint.use_max_z = True
-            constraint.use_min_x = True
-            constraint.use_min_y = True
-            constraint.use_min_z = True
-            constraint.enabled = True
-            curve_prop = collection.greg_settings.curves.add()
-            curve_prop.name = curve_obj.greg_curve_settings.name
-            curve_prop.curve = curve_obj
+            co_s = [p.bpoint.coords for p in (segment.p1, segment.p2)]
+            handles_left = [p.handle_left for p in (segment.p1, segment.p2)]
+            handles_right = [p.handle_right for p in (segment.p1, segment.p2)]
+            curve_obj, curve_prop = add_curve_obj(collection, co_s, handles_left, handles_right)
             for i, p in enumerate((segment.p1, segment.p2)):
                 p.bpoint.created_curves.append((curve_prop.name, i))
-            collection.objects.link(curve_obj)
         for bpoint in self.big_points:
-            empty_obj = bpy.data.objects.new("greg_empty", None)
-            empty_obj.location = bpoint.coords
-            empty_obj.greg_empty_settings.used_for_greg = True
-            empty_obj.greg_empty_settings.name = get_next_id(collection)
-            empty_prop = collection.greg_settings.empties.add()
-            empty_prop.name = empty_obj.greg_empty_settings.name
-            empty_prop.empty = empty_obj
-            collection.objects.link(empty_obj)
+            empty_obj = add_empty_obj(collection, bpoint.coords)
             for name, i in bpoint.created_curves:
                 curve_obj = collection.greg_settings.curves[name].curve
-                curve_end = empty_obj.greg_empty_settings.curve_ends.add()
-                curve_end.basic_end.curve = curve_obj
-                curve_end.basic_end.end = i
-                curve_end.empty = empty_obj
-                curve_end.name = get_next_id(collection)
-                curve_end.basic_end.name = curve_end.name
-                if i == 0:
-                    curve_obj.greg_curve_settings.end1_name = curve_end.name
-                    curve_obj.greg_curve_settings.end1_empty = empty_obj
-                else:
-                    curve_obj.greg_curve_settings.end2_name = curve_end.name
-                    curve_obj.greg_curve_settings.end2_empty = empty_obj
+                add_curve_end(collection, empty_obj, curve_obj, i)
             coplanar_collinear(empty_obj, collection)
             for end in empty_obj.greg_empty_settings.curve_ends:
                 add_hook(end, context)
@@ -2163,6 +2111,67 @@ def print_structure(collection):
         for basic_end in item.arrow.greg_arrow_settings.coplanars:
             print("    basic end name", basic_end.name)
             print("    basic end curve name", basic_end.curve.greg_curve_settings.name)
+
+def add_empty_obj(collection, co):
+    empty_obj = bpy.data.objects.new("greg_empty", None)
+    empty_obj.location = co
+    empty_obj.greg_empty_settings.used_for_greg = True
+    empty_obj.greg_empty_settings.name = get_next_id(collection)
+    empty_prop = collection.greg_settings.empties.add()
+    empty_prop.name = empty_obj.greg_empty_settings.name
+    empty_prop.empty = empty_obj
+    collection.objects.link(empty_obj)
+    return empty_obj
+
+def add_curve_obj(collection, co_s, handles_left, handles_right):
+    curve = bpy.data.curves.new(name="greg_curve", type="CURVE")
+    curve.dimensions = "3D"
+    spline = curve.splines.new("BEZIER")
+    spline.bezier_points.add(1)
+    for i, (co, handle_left, handle_right) in enumerate(zip(co_s, handles_left, handles_right)):
+        spline.bezier_points[i].co = co
+        spline.bezier_points[i].handle_left = co + handle_left
+        spline.bezier_points[i].handle_right = co + handle_right
+        spline.bezier_points[i].handle_left_type = "ALIGNED"
+        spline.bezier_points[i].handle_right_type = "ALIGNED"
+    curve_obj = bpy.data.objects.new(name="greg_curve_obj", object_data=curve)
+    curve_obj.greg_curve_settings.used_for_greg = True
+    curve_obj.greg_curve_settings.name = get_next_id(collection)
+    constraint = curve_obj.constraints.new(type="LIMIT_LOCATION")
+    constraint.owner_space = "WORLD"
+    constraint.max_x = 0
+    constraint.max_y = 0
+    constraint.max_z = 0
+    constraint.min_x = 0
+    constraint.min_y = 0
+    constraint.min_z = 0
+    constraint.use_max_x = True
+    constraint.use_max_y = True
+    constraint.use_max_z = True
+    constraint.use_min_x = True
+    constraint.use_min_y = True
+    constraint.use_min_z = True
+    constraint.enabled = True
+    curve_prop = collection.greg_settings.curves.add()
+    curve_prop.name = curve_obj.greg_curve_settings.name
+    curve_prop.curve = curve_obj
+    collection.objects.link(curve_obj)
+    return curve_obj, curve_prop # DANGER! Do not create new curve_prop while you are using this one
+
+def add_curve_end(collection, empty_obj, curve_obj, i):
+    curve_end = empty_obj.greg_empty_settings.curve_ends.add()
+    curve_end.basic_end.curve = curve_obj
+    curve_end.basic_end.end = i
+    curve_end.empty = empty_obj
+    curve_end.name = get_next_id(collection)
+    curve_end.basic_end.name = curve_end.name
+    if i == 0:
+        curve_obj.greg_curve_settings.end1_name = curve_end.name
+        curve_obj.greg_curve_settings.end1_empty = empty_obj
+    else:
+        curve_obj.greg_curve_settings.end2_name = curve_end.name
+        curve_obj.greg_curve_settings.end2_empty = empty_obj
+    return curve_end.name
 
 def coplanar_collinear(empty: bpy.types.Object, collection: bpy.types.Collection):
     for i, end1 in enumerate(empty.greg_empty_settings.curve_ends):
@@ -2435,6 +2444,10 @@ def copy_transforms(active: bpy.types.Object, new: bpy.types.Object):
     new.scale = active.scale
 
 #**************************************************************************
+def mirror_vec_with_vec(vec, normal, pos):
+    reflected = vec.reflect(normal)
+    delta_vec = pos.project(normal)
+    return reflected + 2*delta_vec
 
 def mirror_vec(vec, mirror_object, axis): #axis: 0 - x, 1 - y, 2 - z
     basic_vec = mathutils.Vector((0, 0, 0))
@@ -2443,9 +2456,7 @@ def mirror_vec(vec, mirror_object, axis): #axis: 0 - x, 1 - y, 2 - z
         mat = mirror_object.matrix_world.copy()
         mat.invert()
         mirror = basic_vec @ mat
-        reflected = vec.reflect(mirror)
-        delta_vec = mirror_object.matrix_world.translation.project(mirror)
-        return reflected + 2*delta_vec
+        return mirror_vec_with_vec(vec, mirror, mirror_object.matrix_world.translation)
     else:
         return vec.reflect(basic_vec)
 
@@ -2960,9 +2971,9 @@ class NewGlobalList:
 
 
     
-    def add_bpoint_if_needed(self, co, original_name, mirror_other_name):
+    def add_bpoint_if_needed(self, co, original_name, mirror_other_names):
         for phantom_bpoint in self.collection.greg_settings.phantom_bpoints:
-            if phantom_bpoint.original_empty_name in (original_name, mirror_other_name):
+            if phantom_bpoint.original_empty_name in (original_name, *mirror_other_names):
                 if same_coords(co, phantom_bpoint.co):
                     return phantom_bpoint
         new_bpoint = self.collection.greg_settings.phantom_bpoints.add()
@@ -2977,8 +2988,8 @@ class NewGlobalList:
         empty2_settings = original_curve_obj.greg_curve_settings.end2_empty.greg_empty_settings
         empty1_name = empty1_settings.name
         empty2_name = empty2_settings.name
-        empty1_mirror_bridge_other_name = empty1_settings.mirror_bridge_other_name
-        empty2_mirror_bridge_other_name = empty2_settings.mirror_bridge_other_name
+        empty1_mirror_bridge_other_names = [it.name for it in empty1_settings.mirror_bridge_other_names]
+        empty2_mirror_bridge_other_names = [it.name for it in empty2_settings.mirror_bridge_other_names]
         phantom_curve = self.collection.greg_settings.phantom_curves.add()
         phantom_curve.name = str(self.ids_counter)
         self.ids_counter += 1
@@ -2990,10 +3001,10 @@ class NewGlobalList:
         end_names = []
         for i in range(2):
             if i == 0:
-                bpoint = self.add_bpoint_if_needed(co1, empty1_name, empty1_mirror_bridge_other_name)
+                bpoint = self.add_bpoint_if_needed(co1, empty1_name, empty1_mirror_bridge_other_names)
                 phantom_curve.bpoint1_name = bpoint.name
             else:
-                bpoint = self.add_bpoint_if_needed(co2, empty2_name, empty2_mirror_bridge_other_name)
+                bpoint = self.add_bpoint_if_needed(co2, empty2_name, empty2_mirror_bridge_other_names)
                 phantom_curve.bpoint2_name = bpoint.name
             end = bpoint.ends.add()
             end.name = str(self.ids_counter)
@@ -3143,7 +3154,6 @@ def render_existing_quad(quad, d, collection, i_s):
 
 
 
-
 #**************************************************************************
 
 class GregId(bpy.types.PropertyGroup):
@@ -3256,7 +3266,7 @@ class GregEmpty(bpy.types.PropertyGroup):
     used_for_greg: bpy.props.BoolProperty(default=False)
     coplanars: bpy.props.CollectionProperty(type=GregArrowItem)
     name: bpy.props.StringProperty(default="")
-    mirror_bridge_other_name: bpy.props.StringProperty(default="")
+    mirror_bridge_other_names: bpy.props.CollectionProperty(type=GregId)
 
 class GregCurve(bpy.types.PropertyGroup):
     used_for_greg: bpy.props.BoolProperty(default=False)
@@ -3537,13 +3547,17 @@ class PrintItemInfo(bpy.types.Operator):
 def add_print_info_func(self, context: bpy.types.Context):
     self.layout.operator(PrintItemInfo.bl_idname)
 
-def check_curve_crosses_mirror(obj):
+def check_curve_crosses_mirror(obj, use_matrix_world = True):
     p1, p2 = None, None
     for i, modifier in enumerate(obj.modifiers):
         if modifier.type == 'MIRROR':
             if p1 is None:
-                p1 = obj.greg_curve_settings.end1_empty.matrix_world.translation
-                p2 = obj.greg_curve_settings.end2_empty.matrix_world.translation
+                if use_matrix_world:
+                    p1 = obj.greg_curve_settings.end1_empty.matrix_world.translation
+                    p2 = obj.greg_curve_settings.end2_empty.matrix_world.translation
+                else:
+                    p1 = obj.greg_curve_settings.end1_empty.location
+                    p2 = obj.greg_curve_settings.end2_empty.location
             mirror_object = modifier.mirror_object
             for axis in range(3):
                 if modifier.use_axis[axis]:
@@ -3602,6 +3616,31 @@ def add_mirror_empty_constraints(empty, target, mirror_object, axis, curve_name)
     constraint2.target = target
     constraint2.name = f"copy_rotation_{curve_name}"
 
+def make_curve_mirror_bridge(curve, target, other, mirror_obj, axis):
+    curve_name = curve.greg_curve_settings.name
+    add_mirror_empty_constraints(other, target, mirror_obj, axis, curve_name)
+    if target == curve.greg_curve_settings.end1_empty:
+        target_end_name = curve.greg_curve_settings.end1_name
+        other_end_name = curve.greg_curve_settings.end2_name
+        target_point = curve.data.splines[0].bezier_points[0]
+        other_point = curve.data.splines[0].bezier_points[1]
+        other_i = 1
+    elif target == curve.greg_curve_settings.end2_empty:
+        target_end_name = curve.greg_curve_settings.end2_name
+        other_end_name = curve.greg_curve_settings.end1_name
+        target_point = curve.data.splines[0].bezier_points[1]
+        other_point = curve.data.splines[0].bezier_points[0]
+        other_i = 0
+    new_other_name = target.greg_empty_settings.mirror_bridge_other_names.add()
+    new_other_name.name = other.greg_empty_settings.name
+    new_target_name = other.greg_empty_settings.mirror_bridge_other_names.add()
+    new_target_name.name = target.greg_empty_settings.name
+    curve.greg_curve_settings.is_mirror_bridge = True
+    curve.greg_curve_settings.bridge_mirror_object = mirror_obj
+    curve.greg_curve_settings.bridge_mirror_axis = axis
+    curve.greg_curve_settings.bridge_mirror_other_i = other_i
+    return target_end_name, other_end_name, target_point, other_point
+
 class MakeCurveMirrorBridge(bpy.types.Operator):
     """Gregory: make curve a bridge through mirror"""
     bl_idname = "object.make_curve_mirror_bridge"
@@ -3638,22 +3677,7 @@ class MakeCurveMirrorBridge(bpy.types.Operator):
         target = [sel for sel in context.selected_objects if sel != curve][0]
         two_empties = (curve.greg_curve_settings.end1_empty, curve.greg_curve_settings.end2_empty)
         other = [empty for empty in two_empties if empty != target][0]
-        curve_name = curve.greg_curve_settings.name
-        add_mirror_empty_constraints(other, target, mirror_obj, axis, curve_name)
-        if target == curve.greg_curve_settings.end1_empty:
-            target_end_name = curve.greg_curve_settings.end1_name
-            other_end_name = curve.greg_curve_settings.end2_name
-            target_point = curve.data.splines[0].bezier_points[0]
-            other_point = curve.data.splines[0].bezier_points[1]
-            other_i = 1
-        elif target == curve.greg_curve_settings.end2_empty:
-            target_end_name = curve.greg_curve_settings.end2_name
-            other_end_name = curve.greg_curve_settings.end1_name
-            target_point = curve.data.splines[0].bezier_points[1]
-            other_point = curve.data.splines[0].bezier_points[0]
-            other_i = 0
-        target.greg_empty_settings.mirror_bridge_other_name = other.greg_empty_settings.name
-        other.greg_empty_settings.mirror_bridge_other_name = target.greg_empty_settings.name
+        target_end_name, other_end_name, target_point, other_point = make_curve_mirror_bridge(curve, target, other, mirror_obj, axis)
         end1 = target.greg_empty_settings.curve_ends[target_end_name]
         end2 = other.greg_empty_settings.curve_ends[other_end_name]
         apply_hook(end1)
@@ -3662,14 +3686,1042 @@ class MakeCurveMirrorBridge(bpy.types.Operator):
         other_point.handle_right = mirror_vec(target_point.handle_left, mirror_obj, axis)
         add_hook(end1)
         add_hook(end2)
-        curve.greg_curve_settings.is_mirror_bridge = True
-        curve.greg_curve_settings.bridge_mirror_object = mirror_obj
-        curve.greg_curve_settings.bridge_mirror_axis = axis
-        curve.greg_curve_settings.bridge_mirror_other_i = other_i
         return {'FINISHED'}    
 
 def add_bridge_mirror_func(self, context: bpy.types.Context):
     self.layout.operator(MakeCurveMirrorBridge.bl_idname)
+
+
+class GlobalForSubdivide:
+    def __init__(self):
+        self.curves = {}
+        self.points = {}
+        self.max_id = 0
+        self.borders = {}
+        self.v_grid = None
+        self.points_grid = []
+        self.edge_points = []
+        self.corner_handles = []
+        self.real_curves = []
+    
+    def add_point_if_needed(self, empty_obj, co):
+        for point in self.points.values():
+            if point.empty == empty_obj or point.empty.greg_empty_settings.name in [it.name for it in empty_obj.greg_empty_settings.mirror_bridge_other_names]:
+                if same_coords(point.co, co):
+                    return point
+        point = PointForSubdivide(co, empty_obj, self.max_id)
+        self.max_id += 1
+        self.points[point.number] = point
+        return point
+
+    def add_curve(self,
+                  empties,
+                  co_s,
+                  is_mirrored,
+                  original_curve,
+                  mirror_sequence=None):
+        points = [self.add_point_if_needed(empty, co) for empty, co in zip(empties, co_s)]
+        p1, p2 = points
+        key = GlobalForSubdivide.make_key(p1.number, p2.number)
+        if key not in self.curves:
+            curve = CurveForSubdivide(p1, p2, is_mirrored, original_curve, mirror_sequence)
+            self.curves[key] = curve
+            p1.curves[key] = (curve, 0)
+            p2.curves[key] = (curve, 1)
+            return curve
+        return self.curves[key] #TODO verify it's correct
+
+    def add_curve_and_mirrors(self, curve_obj):
+        empties = (curve_obj.greg_curve_settings.end1_empty, curve_obj.greg_curve_settings.end2_empty)
+        co_s = [empty.matrix_world.translation for empty in empties]
+        curves = [self.add_curve(empties, co_s, False, curve_obj)]
+        for modifier in curve_obj.modifiers:
+            if modifier.type == 'MIRROR':
+                mirror_object = modifier.mirror_object
+                for axis in range(3):
+                    if modifier.use_axis[axis]:
+                        new_curves = []
+                        for curve in curves:
+                            co_s = [p.co for p in curve.points]
+                            new_cos = [mirror_vec(co, mirror_object, axis) for co in co_s]
+                            new_mirror_sequence = curve.mirror_sequence.copy()
+                            new_mirror_sequence.append(MirrorSequenceItem(mirror_object, axis))
+                            new_curves.append(self.add_curve(empties, new_cos, True, curve_obj, new_mirror_sequence))
+                        curves.extend(new_curves)
+
+    def find_borders(self, empties):
+        all_corresponding_points = []
+        for empty in empties:
+            corresponding_points = [point for point in self.points.values() if point.empty == empty]
+            if len(corresponding_points) == 0:
+                return False
+            all_corresponding_points.extend(corresponding_points)
+        for point in all_corresponding_points:
+            number = point.number
+            if number not in self.borders:
+                self.borders[number] = {}
+            curves_visited = [value[1][0] for value in self.borders[number].values()]
+            for curve, _ in point.curves.values():
+                if curve not in curves_visited:
+                    prev_point = point
+                    next_curve = curve
+                    curves_sequence = [next_curve]
+                    stop = False
+                    while not stop:
+                        next_point = [p for p in next_curve.points if p != prev_point][0]
+                        if next_point in all_corresponding_points:
+                            if next_point == point:
+                                return False
+                            stop = True
+                        else:
+                            if len(next_point.curves) != 2:
+                                return False
+                            next_curve = [c[0] for c in next_point.curves.values() if c[0] != next_curve][0]
+                            prev_point = next_point
+                            curves_sequence.append(next_curve)
+                    other_number = next_point.number
+                    self.borders[number][other_number] = (len(curves_sequence), curves_sequence)
+                    if other_number not in self.borders:
+                        self.borders[other_number] = {}
+                    self.borders[other_number][number] = (len(curves_sequence), list(reversed(curves_sequence)))
+        quads = {}
+        for point in self.borders.keys():
+            stack = [point]
+            if GlobalForSubdivide.step(quads, stack, self.borders) == False:
+                return False
+        not_mirrored_max = 0
+        optimal_quad = None
+        for quad in quads.values():
+            not_mirrored = GlobalForSubdivide.get_count_not_mirrored(quad, self.borders)
+            if not_mirrored > not_mirrored_max:
+                not_mirrored_max = not_mirrored
+                optimal_quad = quad
+        if optimal_quad is None:
+            return False
+        if not_mirrored_max != len([curve for curve in self.curves.values() if not curve.is_mirrored]):
+            return False
+        return optimal_quad
+
+
+
+    @staticmethod
+    def get_count_not_mirrored(quad, borders):
+        counter = 0
+        for i in range(4):
+            curves_sequence = borders[quad[i]][quad[(i+1)%4]][1]
+            for curve in curves_sequence:
+                if not curve.is_mirrored:
+                    counter += 1
+        return counter
+    
+    @staticmethod
+    def get_name_of_quad(stack):
+        borders = stack.copy()
+        borders.sort()
+        borders = [str(b) for b in borders]
+        return ".".join(borders)
+    
+    @staticmethod
+    def step(quads, stack, borders):
+        first_point = stack[0]
+        for other_point in borders[stack[-1]].keys():
+            if len(stack) < 4 and other_point not in stack:
+                stack.append(other_point)
+                if GlobalForSubdivide.step(quads, stack, borders) == False:
+                    return False
+                stack.pop()
+            elif len(stack) == 4 and other_point == first_point:
+                if not GlobalForSubdivide.verify_correct_quad(stack, borders):
+                    return False
+                name = GlobalForSubdivide.get_name_of_quad(stack)
+                if name not in quads:
+                    quads[name] = stack.copy()
+        return
+
+    @staticmethod
+    def verify_correct_quad(stack, borders):
+        sides = [borders[stack[i]][stack[(i+1)%4]] for i in range(4)]
+        if sides[0][0] != sides[2][0]:
+            return False
+        if sides[1][0] != sides[3][0]:
+            return False
+        return True
+
+    @staticmethod
+    def make_key(i1, i2):
+        i_s = [i1, i2]
+        i_s.sort()
+        return f"{i_s[0]}_{i_s[1]}"
+    
+    @staticmethod
+    def get_next_point(point, curve):
+        return [p for p in curve.points if p != point][0]
+
+    def extract_quad_points(self, quad):
+        for i in range(4):
+            p0_number = quad[i]
+            p1_number = quad[(i+1)%4]
+            if i in (2, 3):
+                p0_number, p1_number = p1_number, p0_number
+            curves = self.borders[p0_number][p1_number][1]
+            points = [self.points[p0_number]]
+            for curve in curves:
+                points.append(GlobalForSubdivide.get_next_point(points[-1], curve))
+            self.edge_points.append(points)
+    
+    @staticmethod
+    def mirror_with_sequence(vec, mirror_sequence):
+        for item in mirror_sequence:
+            vec = mirror_vec(vec, item.mirror_object, item.axis)
+        return vec
+    
+    @staticmethod
+    def get_handle_other(point, curve_prev, curve_post):
+        prev_other_i = None
+        post_other_i = None
+        bridge_mirror_vec_prev = None
+        bridge_mirror_vec_post = None
+        not_bridge = True
+        if curve_prev.original_curve.greg_curve_settings.is_mirror_bridge:
+            prev_other_i = curve_prev.original_curve.greg_curve_settings.bridge_mirror_other_i
+        if curve_post.original_curve.greg_curve_settings.is_mirror_bridge:
+            post_other_i = curve_post.original_curve.greg_curve_settings.bridge_mirror_other_i
+        if (prev_other_i == 0 and curve_prev.points[0] == point) or\
+           (prev_other_i == 1 and curve_prev.points[1] == point):
+            not_bridge = False
+            original_empty = curve_prev.points[(prev_other_i + 1) % 2].empty
+            bridge_mirror_vec_prev = curve_prev.points[1].co - curve_prev.points[0].co
+            bridge_mirror_pos_prev = (curve_prev.points[1].co + curve_prev.points[0].co) / 2
+        if (post_other_i == 0 and curve_post.points[0] == point) or\
+           (post_other_i == 1 and curve_post.points[1] == point):
+            not_bridge = False
+            original_empty = curve_post.points[(post_other_i + 1) % 2].empty
+            bridge_mirror_vec_post = curve_post.points[1].co - curve_post.points[0].co
+            bridge_mirror_pos_post = (curve_post.points[1].co + curve_post.points[0].co) / 2
+        if not_bridge:
+            original_empty = point.empty
+        curves = [(end.basic_end.curve, end.basic_end.end)\
+                  for end in original_empty.greg_empty_settings.curve_ends\
+                  if end.basic_end.curve not in (curve_prev.original_curve, curve_post.original_curve)]
+        if not curves:
+            return None
+        points = [(curve.data.splines[0].bezier_points[i], i) for curve, i in curves]
+        handles = [point.handle_left if i == 0 else point.handle_right for point, i in points]
+        mirrored_handles_prev = [GlobalForSubdivide.mirror_with_sequence(handle, curve_prev.mirror_sequence) for handle in handles]
+        if bridge_mirror_vec_prev is not None:
+            mirrored_handles_prev = [mirror_vec_with_vec(h, bridge_mirror_vec_prev, bridge_mirror_pos_prev)
+                                     for h in mirrored_handles_prev]
+        mirrored_handles_post = [GlobalForSubdivide.mirror_with_sequence(handle, curve_post.mirror_sequence) for handle in handles]
+        if bridge_mirror_vec_post is not None:
+            mirrored_handles_post = [mirror_vec_with_vec(h, bridge_mirror_vec_post, bridge_mirror_pos_post)
+                                     for h in mirrored_handles_post]
+        mirrored_handles = mirrored_handles_post.copy()
+        for handle1 in mirrored_handles_prev:
+            add = True
+            for handle2 in mirrored_handles_post:
+                if same_coords(handle1, handle2):
+                    add = False
+                    break
+            if add:
+                mirrored_handles.append(handle1)
+        total = mirrored_handles[0]
+        for el in mirrored_handles[1:]:
+            total += el
+        mean_handle = total / len(mirrored_handles)
+        return mean_handle - point.co
+    
+    @staticmethod
+    def get_handles_left_right(point, curve_prev, curve_post):
+        if curve_prev.points[0] == point:
+            handle_left_point_init = curve_prev.original_curve.data.splines[0].bezier_points[0].handle_right
+        elif curve_prev.points[1] == point:
+            handle_left_point_init = curve_prev.original_curve.data.splines[0].bezier_points[1].handle_left
+        handle_left_point = GlobalForSubdivide.mirror_with_sequence(handle_left_point_init, curve_prev.mirror_sequence)
+        handle_left = handle_left_point - point.co
+        if curve_post.points[0] == point:
+            handle_right_point_init = curve_post.original_curve.data.splines[0].bezier_points[0].handle_right
+        elif curve_post.points[1] == point:
+            handle_right_point_init = curve_post.original_curve.data.splines[0].bezier_points[1].handle_left
+        handle_right_point = GlobalForSubdivide.mirror_with_sequence(handle_right_point_init, curve_post.mirror_sequence)
+        handle_right = handle_right_point - point.co
+        return handle_left, handle_right
+    
+    def fill_handles(self, quad):
+        for i in range(4):
+            p0_number = quad[i]
+            p1_number = quad[(i+1)%4]
+            if i in (2, 3):
+                p0_number, p1_number = p1_number, p0_number
+            curves_len, curves = self.borders[p0_number][p1_number]
+            for j in range(curves_len - 1):
+                point = self.edge_points[i][j+1]
+                curve_prev = curves[j]
+                curve_post = curves[j+1]
+                point.handle_left, point.handle_right = GlobalForSubdivide.get_handles_left_right(point, curve_prev, curve_post)
+                point.handle_other = GlobalForSubdivide.get_handle_other(point, curve_prev, curve_post)
+
+    @staticmethod
+    def populate_handles(handles):
+        i = 0
+        count = 1
+        while i < (len(handles) - 1):
+            p1 = handles[i]
+            assert isinstance(p1, mathutils.Vector)
+            count = 1
+            p2 = handles[i + count]
+            while p2 is None:
+                count += 1
+                p2 = handles[i + count]
+            for j in range(i + 1, i + count):
+                factor = j / count
+                handles[j] = p1.lerp(p2, factor)
+            i += count
+        return handles
+    
+    def extract_coords(self, i):
+        return [p.co for p in self.edge_points[i]]
+    
+    def extract_xtot_ytot(self, quad):
+        self.xtot = self.borders[quad[0]][quad[1]][0] + 1
+        self.ytot = self.borders[quad[1]][quad[2]][0] + 1
+    
+    def extract_corner_handles(self, quad):
+        p30, p01, p12, p23 = [self.points[q] for q in quad]
+        border0 = self.borders[quad[0]][quad[1]][1]
+        border1 = self.borders[quad[1]][quad[2]][1]
+        border2 = self.borders[quad[3]][quad[2]][1]
+        border3 = self.borders[quad[0]][quad[3]][1]
+        handle_left_1, handle_right_0 = GlobalForSubdivide.get_handles_left_right(p01, border0[-1], border1[0])
+        handle_right_2, handle_right_1 = GlobalForSubdivide.get_handles_left_right(p12, border1[-1], border2[-1])
+        handle_left_2, handle_right_3 = GlobalForSubdivide.get_handles_left_right(p23, border3[-1], border2[0])
+        handle_left_0, handle_left_3 = GlobalForSubdivide.get_handles_left_right(p30, border3[0], border0[0])
+        self.corner_handles.append((handle_left_0, handle_right_0))
+        self.corner_handles.append((handle_left_1, handle_right_1))
+        self.corner_handles.append((handle_left_2, handle_right_2))
+        self.corner_handles.append((handle_left_3, handle_right_3))
+    
+    def extract_handles(self, i: int):
+        handles_len = self.xtot if i in (0, 2) else self.ytot
+        handles = [None] * handles_len
+        handles[0] = self.corner_handles[i][0]
+        handles[-1] = self.corner_handles[i][1]
+        for j in range(1, handles_len - 1):
+            point = self.edge_points[i][j]
+            handles[j] = point.handle_other
+        return handles
+    
+    def get_handles_right_left(self, i, right):
+        if right:
+            if i == 0:
+                first = self.corner_handles[3][0]
+                last = -self.corner_handles[1][0]
+            elif i == 1:
+                first = self.corner_handles[0][1]
+                last = -self.corner_handles[2][1]
+            elif i == 2:
+                first = self.corner_handles[3][1]
+                last = -self.corner_handles[1][1]
+            elif i == 3:
+                first = self.corner_handles[0][0]
+                last = -self.corner_handles[2][0]
+        else:
+            if i == 0:
+                first = -self.corner_handles[3][0]
+                last = self.corner_handles[1][0]
+            elif i == 1:
+                first = -self.corner_handles[0][1]
+                last = self.corner_handles[2][1]
+            elif i == 2:
+                first = -self.corner_handles[3][1]
+                last = self.corner_handles[1][1]
+            elif i == 3:
+                first = -self.corner_handles[0][0]
+                last = self.corner_handles[2][0]
+        middle = [p.handle_right if right else p.handle_left for p in self.edge_points[i][1:-1]]
+        return [first] + middle + [last]
+    
+    def calc_init_coords(self,
+                         i: int,
+                         right: bool,
+                         horisontal: bool,
+                         h1: bool,
+                         h: List[mathutils.Vector]):
+        tot = self.ytot if horisontal else self.xtot
+        second_coord = 0 if h1 else tot - 1
+        first_coord1 = i - 1 if right else i + 1
+        first_coord2 = i + 1 if right else i - 1
+        coords1 = [first_coord1, second_coord]
+        coords2 = [first_coord2, second_coord]
+        coords3 = [i, second_coord]
+        if not horisontal:
+            for l in (coords1, coords2, coords3):
+                l.reverse()
+        for l in (coords1, coords2, coords3):
+            l.append(self.xtot)
+        matrix = calc_basis(self.v_grid[XY(*coords1)],
+                            self.v_grid[XY(*coords2)],
+                            self.v_grid[XY(*coords3)],
+                            h[first_coord1],
+                            h[i],
+                            False)
+        return get_coords_from_vec_and_basis_matrix(h[i], matrix)
+    
+    def handle_fin(self,
+                   i: int,
+                   j: int,
+                   vh1: List[mathutils.Vector],
+                   vh2: List[mathutils.Vector],
+                   coords1: mathutils.Vector,
+                   coords2: mathutils.Vector,
+                   right: bool,
+                   horisontal: bool):
+        xtot = self.xtot if horisontal else self.ytot
+        ytot = self.ytot if horisontal else self.xtot
+        coord1 = i - 1 if right else i + 1
+        coord2 = i + 1 if right else i - 1
+        c1 = [coord1, j]
+        c2 = [coord2, j]
+        c3 = [i, j]
+        h_side = vh1[j].lerp(-vh2[j], (i - 1)/(xtot - 1)) if right else -vh1[j].lerp(vh2[j], (i + 1)/(xtot - 1))
+        if not horisontal:
+            for c in (c1, c2, c3):
+                c.reverse()
+        for c in (c1, c2, c3):
+            c.append(self.xtot)
+        dest_m = calc_basis(self.v_grid[XY(*c1)],
+                             self.v_grid[XY(*c2)],
+                             self.v_grid[XY(*c3)],
+                             h_side)
+        coords_fin = coords1.lerp(coords2, j/(ytot - 1))
+        return get_vec_from_coords_and_basis_matrix(coords_fin, dest_m)
+    
+    @staticmethod
+    def verify_is_mirror(object_for_mirror, curve1, curve2):
+        if curve1.original_curve == curve2.original_curve:
+            co1 = [p.co for p in curve1.points]
+            co2 = [p.co for p in curve2.points]
+            for modifier in object_for_mirror.modifiers:
+                if modifier.type == 'MIRROR':
+                    obj = modifier.mirror_object
+                    for axis in range(3):
+                        if same_coords(mirror_vec(co1[0], obj, axis), co2[0]) and\
+                        same_coords(mirror_vec(co1[1], obj, axis), co2[1]):
+                            return obj, axis
+        return None
+    
+    def symmetrize(self):
+        if self.xtot > 2 and self.ytot > 2:
+            border0 = self.borders[self.optimal_quad[0]][self.optimal_quad[1]][1]
+            border1 = self.borders[self.optimal_quad[1]][self.optimal_quad[2]][1]
+            border2 = self.borders[self.optimal_quad[3]][self.optimal_quad[2]][1]
+            border3 = self.borders[self.optimal_quad[0]][self.optimal_quad[3]][1]
+            object_for_mirror = border0[0].original_curve
+            vertical = None
+            horizontal = None
+            diagonal1 = None
+            diagonal2 = None
+            if self.xtot == self.ytot:
+                diagonal1 = GlobalForSubdivide.verify_is_mirror(object_for_mirror, border0[0], border3[0])
+                diagonal2 = GlobalForSubdivide.verify_is_mirror(object_for_mirror, border0[-1], border1[0])
+            horizontal = GlobalForSubdivide.verify_is_mirror(object_for_mirror, border0[0], border2[0])
+            vertical = GlobalForSubdivide.verify_is_mirror(object_for_mirror, border1[0], border3[0])
+            if diagonal1:
+                for x in range(1, self.xtot - 1):
+                    point = self.points_grid[x][x]
+                    GlobalForSubdivide.add_point_to_symmetrize(point, *diagonal1)
+            if diagonal2:
+                for x in range(1, self.xtot - 1):
+                    y = self.xtot - x - 1
+                    point = self.points_grid[y][x]
+                    GlobalForSubdivide.add_point_to_symmetrize(point, *diagonal2)
+            if horizontal and vertical and (not diagonal1) and (not diagonal2) and self.xtot % 2 == 0 and self.ytot % 2 == 0:
+                x2 = self.xtot // 2
+                x1 = x2 - 1
+                y2 = self.ytot // 2
+                y1 = y2 - 1
+                p1 = self.points_grid[y1][x1]
+                p2 = self.points_grid[y1][x2]
+                p3 = self.points_grid[y2][x1]
+                p4 = self.points_grid[y2][x2]
+                p1.other_points_and_mirrors.add((p4, horizontal, vertical))
+                p2.other_points_and_mirrors.add((p3, horizontal, vertical))
+                p3.other_points_and_mirrors.add((p2, horizontal, vertical))
+                p4.other_points_and_mirrors.add((p1, horizontal, vertical))
+            if horizontal:
+                if self.ytot % 2 == 1:
+                    middle_y = self.ytot // 2
+                    for x in range(1, self.xtot - 1):
+                        point = self.points_grid[middle_y][x]
+                        GlobalForSubdivide.add_point_to_symmetrize(point, *horizontal)
+                else:
+                    y2 = self.ytot // 2
+                    y1 = y2 - 1
+                    for x in range(1, self.xtot - 1):
+                        point1 = self.points_grid[y1][x]
+                        point2 = self.points_grid[y2][x]
+                        point1.other_points_and_mirrors.add((point2, horizontal))
+                        point2.other_points_and_mirrors.add((point1, horizontal))
+            if vertical:
+                if self.xtot % 2 == 1:
+                    middle_x = self.xtot // 2
+                    for y in range(1, self.ytot - 1):
+                        point = self.points_grid[y][middle_x]
+                        GlobalForSubdivide.add_point_to_symmetrize(point, *vertical)
+                else:
+                    x2 = self.xtot // 2
+                    x1 = x2 - 1
+                    for y in range(1, self.ytot - 1):
+                        point1 = self.points_grid[y][x1]
+                        point2 = self.points_grid[y][x2]
+                        point1.other_points_and_mirrors.add((point2, vertical))
+                        point2.other_points_and_mirrors.add((point1, vertical))
+        for row in self.points_grid:
+            for point in row:
+                point.total_from_mirrored()
+        for row in self.points_grid:
+            for point in row:
+                point.set_final_coords()
+
+    @staticmethod
+    def add_point_to_symmetrize(point: "MiddlePoint", obj, axis: int):
+        new_co_s = []
+        for co in point.mirrored_co_s:
+            new_co_s.append(mirror_vec(co, obj, axis))
+        for new_co in new_co_s:
+            to_add = True
+            for co in point.mirrored_co_s:
+                if same_coords(new_co, co):
+                    to_add = False
+                    break
+            if to_add:
+                point.mirrored_co_s.append(new_co)
+    
+    def subdivide(self, optimal_quad):
+        self.optimal_quad = optimal_quad
+        self.extract_xtot_ytot(optimal_quad)
+        self.extract_quad_points(optimal_quad)
+        v1 = self.extract_coords(0)
+        v2 = self.extract_coords(2)
+        rv1 = self.extract_coords(3)
+        rv2 = self.extract_coords(1)
+        self.v_grid = grid_fill(v1, v2, rv1, rv2)
+        for i in range(self.ytot):
+            row = []
+            for j in range(self.xtot):
+                row.append(MiddlePoint(self.v_grid[XY(j, i, self.xtot)]))
+            self.points_grid.append(row)
+        self.symmetrize()
+        self.extract_corner_handles(optimal_quad)
+        self.fill_handles(optimal_quad)
+        cross_hs = [GlobalForSubdivide.populate_handles(self.extract_handles(i)) for i in range(4)]
+        cross_h1 = cross_hs[0]
+        cross_h2 = cross_hs[2]
+        cross_vh1 = cross_hs[3]
+        cross_vh2 = cross_hs[1]
+        h_right_left = [
+            (
+                self.get_handles_right_left(i, True),
+                self.get_handles_right_left(i, False)
+            ) for i in range(4)]
+        h1_right = h_right_left[0][0]
+        h1_left = h_right_left[0][1]
+        h2_right = h_right_left[2][0]
+        h2_left = h_right_left[2][1]
+        vh1_down = h_right_left[3][0]
+        vh1_up = h_right_left[3][1]
+        vh2_down = h_right_left[1][0]
+        vh2_up = h_right_left[1][1]
+        horisontal = True
+        for i in range(1, self.xtot - 1):
+            coords_right1 = self.calc_init_coords(i, True, horisontal, True, h1_right)
+            coords_right2 = self.calc_init_coords(i, True, horisontal, False, h2_right)
+            coords_left1 = self.calc_init_coords(i, False, horisontal, True, h1_left)
+            coords_left2 = self.calc_init_coords(i, False, horisontal, False, h2_left)
+            for j in range(1, self.ytot - 1):
+                res_right = self.handle_fin(i, j, cross_vh1, cross_vh2, coords_right1, coords_right2, True, horisontal)
+                res_left = self.handle_fin(i, j, cross_vh1, cross_vh2, coords_left1, coords_left2, False, horisontal)
+                collinear_right, collinear_left = make_collinear(res_right, res_left)
+                self.points_grid[j][i].handle_right = collinear_right
+                self.points_grid[j][i].handle_left = collinear_left
+        vertical = False
+        for j in range(1, self.ytot - 1):
+            coords_down1 = self.calc_init_coords(j, True, vertical, True, vh1_down)
+            coords_down2 = self.calc_init_coords(j, True, vertical, False, vh2_down)
+            coords_up1 = self.calc_init_coords(j, False, vertical, True, vh1_up)
+            coords_up2 = self.calc_init_coords(j, False, vertical, False, vh2_up)
+            for i in range(1, self.xtot - 1):
+                res_down = self.handle_fin(j, i, cross_h1, cross_h2, coords_down1, coords_down2, True, vertical)
+                res_up = self.handle_fin(j, i, cross_h1, cross_h2, coords_up1, coords_up2, False, vertical)
+                collinear_down, collinear_up = make_collinear(res_down, res_up)
+                self.points_grid[j][i].handle_down = collinear_down
+                self.points_grid[j][i].handle_up = collinear_up
+        for i in range(self.xtot):
+            self.points_grid[0][i].handle_down = cross_h1[i]
+            self.points_grid[0][i].handle_up = -cross_h1[i]
+            self.points_grid[self.ytot - 1][i].handle_down = -cross_h2[i]
+            self.points_grid[self.ytot - 1][i].handle_up = cross_h2[i]
+        for i in range(self.ytot):
+            self.points_grid[i][0].handle_right = cross_vh1[i]
+            self.points_grid[i][0].handle_left = -cross_vh1[i]
+            self.points_grid[i][self.xtot - 1].handle_right = -cross_vh2[i]
+            self.points_grid[i][self.xtot - 1].handle_left = cross_vh2[i]
+  
+    @staticmethod
+    def verify_and_get_empty(curves, point):
+        empty = None
+        for curve in curves:
+            if not curve.is_mirrored:
+                if (not curve.original_curve.greg_curve_settings.is_mirror_bridge):
+                    empty = point.empty
+                else:
+                    key = GlobalForSubdivide.make_key(curve.points[0].number, curve.points[1].number)
+                    curve_i = point.curves[key][1]
+                    if curve_i != curve.original_curve.greg_curve_settings.bridge_mirror_other_i:
+                        empty = point.empty
+        if empty is None:
+            raise ValueError("something wrong with selection")
+        return empty
+    
+    @staticmethod
+    def is_real_side_part(side, part, borders):
+        index = part * (-2) + 1
+        return not borders[side][index].is_mirrored
+    
+    def generate_triangle(self, side, part): # only if xtot == ytot
+        if side == 3:
+            if part == 0:
+                for y in range(1, self.ytot // 2):
+                    for x in range(y):
+                        yield ((x, y), (x + 1, y))
+                for y in range(1, (self.ytot - 1) // 2):
+                    for x in range(1, y + 1):
+                        yield ((x, y), (x, y + 1))
+            elif part == 1:
+                for y in range((self.ytot + 1) // 2, self.ytot - 1):
+                    for x in range(self.ytot - y - 1):
+                        yield ((x, y), (x + 1, y))
+                for y in range(self.ytot // 2, self.ytot - 2):
+                    for x in range(1, self.ytot - y - 1):
+                        yield ((x, y), (x, y + 1))
+        elif side == 0:
+            if part == 0:
+                for x in range(1, self.xtot // 2):
+                    for y in range(x):
+                        yield ((x, y), (x, y + 1))
+                for x in range(1, (self.xtot - 1) // 2):
+                    for y in range(1, x + 1):
+                        yield ((x, y), (x + 1, y))
+            elif part == 1:
+                for x in range((self.xtot + 1) // 2, self.xtot - 1):
+                    for y in range(self.xtot - x - 1):
+                        yield ((x, y), (x, y + 1))
+                for x in range(self.xtot // 2, self.xtot - 2):
+                    for y in range(1, self.xtot - x - 1):
+                        yield ((x, y), (x + 1, y))
+        elif side == 1:
+            if part == 0:
+                for y in range(1, self.ytot // 2):
+                    for x in range(self.ytot - y - 1, self.ytot - 1):
+                        yield ((x, y), (x + 1, y))
+                for y in range(1, (self.ytot - 1) // 2):
+                    for x in range(self.ytot - y - 1, self.ytot - 1):
+                        yield ((x, y), (x, y + 1))
+            elif part == 1:
+                for y in range((self.ytot + 1) // 2, self.ytot - 1):
+                    for x in range(self.ytot - y, self.ytot - 1):
+                        yield ((x, y), (x + 1, y))
+                for y in range(self.ytot // 2, self.ytot - 2):
+                    for x in range(self.ytot - y + 1, self.ytot - 1):
+                        yield ((x, y), (x, y + 1))
+        elif side == 2:
+            if part == 0:
+                for x in range(1, self.xtot // 2):
+                    for y in range(self.xtot - x - 1, self.xtot - 1):
+                        yield ((x, y), (x, y + 1))
+                for x in range(1, (self.xtot - 1) // 2):
+                    for y in range(self.xtot - x - 1, self.xtot - 1):
+                        yield ((x, y), (x + 1, y))
+            elif part == 1:
+                for x in range((self.xtot + 1) // 2, self.xtot - 1):
+                    for y in range(self.xtot - x, self.xtot - 1):
+                        yield ((x, y), (x, y + 1))
+                for x in range(self.xtot // 2, self.xtot - 2):
+                    for y in range(self.xtot - y + 1, self.xtot - 1):
+                        yield ((x, y), (x + 1, y))
+
+    
+    def generate_strip(self, side):
+        if side == 0:
+            if self.xtot % 2 == 0:
+                for y in range(1, self.ytot // 2):
+                    yield ((self.xtot // 2 - 1, y), (self.xtot // 2, y))
+            elif self.xtot % 2 == 1:
+                for y in range((self.ytot - 1) // 2):
+                    yield ((self.xtot // 2, y), (self.xtot // 2, y + 1))
+        if side == 3:
+            if self.ytot % 2 == 0:
+                for x in range(1, self.xtot // 2):
+                    yield ((x, self.ytot // 2 - 1), (x, self.ytot // 2))
+            elif self.ytot % 2 == 1:
+                for x in range((self.xtot - 1) // 2):
+                    yield ((x, self.ytot // 2), (x + 1, self.ytot // 2))
+        elif side == 1:
+            if self.ytot % 2 == 0:
+                for x in range((self.xtot + 1) // 2, self.xtot - 1):
+                    yield((x, self.ytot // 2 - 1), (x, self.ytot // 2))
+            elif self.ytot % 2 == 1:
+                for x in range(self.xtot // 2, self.xtot - 1):
+                    yield ((x, self.ytot // 2), (x + 1, self.ytot // 2))
+        elif side == 2:
+            if self.xtot % 2 == 0:
+                for y in range((self.ytot + 1) // 2, self.ytot - 1):
+                    yield((self.xtot // 2 - 1, y), (self.xtot // 2, y))
+            elif self.xtot % 2 == 1:
+                for y in range(self.ytot // 2, self.ytot - 1):
+                    yield ((self.xtot // 2, y), (self.xtot // 2, y + 1))
+    
+    def generate_central(self):
+        if self.xtot % 2 == 0 and self.ytot % 2 == 1:
+            yield ((self.xtot // 2 - 1, self.ytot // 2), (self.xtot // 2, self.ytot // 2))
+        elif self.xtot % 2 == 1 and self.ytot % 2 == 0:
+            yield ((self.xtot // 2, self.ytot // 2 - 1), (self.xtot // 2, self.ytot // 2))
+                
+    def generate_rect(self, side, part): # if xtot != ytot 
+        if (side == 0 and part == 0) or (side == 3 and part == 0):
+            for x in range((self.xtot - 1) // 2):
+                for y in range(1, self.ytot // 2):
+                    yield ((x, y), (x + 1, y))
+            for x in range(1, self.xtot // 2):
+                for y in range((self.ytot - 1) // 2):
+                    yield ((x, y), (x, y + 1))
+        elif (side == 0 and part == 1) or (side == 1 and part == 0):
+            for x in range(self.xtot // 2, self.xtot - 1):
+                for y in range(1, self.ytot // 2):
+                    yield ((x, y), (x + 1, y))
+            for x in range((self.xtot + 1) // 2, self.xtot - 1):
+                for y in range((self.ytot - 1) // 2):
+                    yield ((x, y), (x, y + 1))
+        elif (side == 2 and part == 0) or (side == 3 and part == 1):
+            for y in range(self.ytot // 2, self.ytot - 1):
+                for x in range(1, self.xtot // 2):
+                    yield ((x, y), (x, y + 1))
+            for y in range((self.ytot + 1) // 2, self.ytot - 1):
+                for x in range((self.xtot - 1) // 2):
+                    yield ((x, y), (x + 1, y))
+        elif (side == 1 and part == 1) or (side == 2 and part == 1):
+            for x in range(self.xtot // 2, self.xtot - 1):
+                for y in range((self.ytot + 1) // 2, self.ytot - 1):
+                    yield ((x, y), (x + 1, y))
+            for y in range(self.ytot // 2, self.ytot - 1):
+                for x in range((self.xtot + 1) // 2, self.xtot - 1):
+                    yield ((x, y), (x, y + 1))
+
+    def add_real_curve(self, xy1, xy2, border0, border1, border2, border3, empties_to_coplanar_collinear, collection, obj_for_mirror):
+        x1, y1 = xy1
+        x2, y2 = xy2
+        is_border1 = False
+        is_border2 = False
+        empty1 = None
+        empty2 = None
+        middle_point1 = self.points_grid[y1][x1]
+        middle_point2 = self.points_grid[y2][x2]
+        if x1 == 0:
+            curves_border = border3[y1 - 1], border3[y1]
+            point = self.edge_points[3][y1]
+            empty1 = GlobalForSubdivide.verify_and_get_empty(curves_border, point)
+            is_border1 = True
+        elif y1 == 0:
+            curves_border = border0[x1 - 1], border0[x1]
+            point = self.edge_points[0][x1]
+            empty1 = GlobalForSubdivide.verify_and_get_empty(curves_border, point)
+            is_border1 = True
+        if x2 == self.xtot - 1:
+            curves_border = border1[y1 - 1], border1[y1]
+            point = self.edge_points[1][y1]
+            empty2 = GlobalForSubdivide.verify_and_get_empty(curves_border, point)
+            is_border2 = True
+        elif y2 == self.ytot - 1:
+            curves_border = border2[x1 - 1], border2[x1]
+            point = self.edge_points[2][x1]
+            empty2 = GlobalForSubdivide.verify_and_get_empty(curves_border, point)
+            is_border2 = True
+        if empty1 is None:
+            empty1 = middle_point1.empty
+        if empty2 is None:
+            empty2 = middle_point2.empty
+        if empty1 is None:
+            empty1 = add_empty_obj(collection, middle_point1.co)
+        if empty2 is None:
+            empty2 = add_empty_obj(collection, middle_point2.co)
+        middle_point1.empty = empty1
+        middle_point2.empty = empty2
+        co_s = (middle_point1.co, middle_point2.co)
+        if x1 == x2:
+            handles_left = (middle_point1.handle_up, middle_point2.handle_up)
+            handles_right = (middle_point1.handle_down, middle_point2.handle_down)
+        elif y1 == y2:
+            handles_left = (middle_point1.handle_left, middle_point2.handle_left)
+            handles_right = (middle_point1.handle_right, middle_point2.handle_right)
+        curve_obj, _ = add_curve_obj(collection, co_s, handles_left, handles_right)
+        i = 1
+        for modifier in obj_for_mirror.modifiers:
+            if modifier.type == 'MIRROR':
+                new_mirror = curve_obj.modifiers.new(f"mirror_{i}", 'MIRROR')
+                new_mirror.mirror_object = modifier.mirror_object
+                new_mirror.use_axis = modifier.use_axis
+                i += 1
+        end1_name = add_curve_end(collection, empty1, curve_obj, 0)
+        end2_name = add_curve_end(collection, empty2, curve_obj, 1)
+        if is_border1:
+            empties_to_coplanar_collinear.add((empty1, end1_name))
+        else:
+            empties_to_coplanar_collinear.add((empty1, None))
+        if is_border2:
+            empties_to_coplanar_collinear.add((empty2, end2_name))
+        else:
+            empties_to_coplanar_collinear.add((empty2, None))
+        if x1 == (self.xtot // 2 - 1) and y2 == y1 and self.xtot % 2 == 0:
+            res = check_curve_crosses_mirror(curve_obj, False)
+            if res:
+                i, axis = res
+                mirror_obj = curve_obj.modifiers[i].mirror_object
+                if (not border0[0].is_mirrored) or (not border2[0].is_mirrored):
+                    target = empty1
+                    other = empty2
+                elif (not border0[-1].is_mirrored) or (not border2[-1].is_mirrored):
+                    target = empty2
+                    other = empty1
+                make_curve_mirror_bridge(curve_obj, target, other, mirror_obj, axis)
+        elif y1 == (self.ytot // 2 - 1) and x2 == x1 and self.ytot % 2 == 0:
+            res = check_curve_crosses_mirror(curve_obj, False)
+            if res:
+                i, axis = res
+                mirror_obj = curve_obj.modifiers[i].mirror_object
+                if (not border1[0].is_mirrored) or (not border3[0].is_mirrored):
+                    target = empty1
+                    other = empty2
+                elif (not border1[-1].is_mirrored) or (not border3[-1].is_mirrored):
+                    target = empty2
+                    other = empty1
+                make_curve_mirror_bridge(curve_obj, target, other, mirror_obj, axis)
+    
+    
+    def add_real_curves(self, collection, context):
+        border0 = self.borders[self.optimal_quad[0]][self.optimal_quad[1]][1]
+        border1 = self.borders[self.optimal_quad[1]][self.optimal_quad[2]][1]
+        border2 = self.borders[self.optimal_quad[3]][self.optimal_quad[2]][1]
+        border3 = self.borders[self.optimal_quad[0]][self.optimal_quad[3]][1]
+        empties_to_coplanar_collinear = set()
+        sequence_of_xys = [self.generate_central()]
+        obj_for_mirror = border0[0].original_curve # some curve. We suppose here that all curves have the same mirrors TODO maybe do better
+        if self.xtot == self.ytot:
+            for side in range(4):
+                for part in range(2):
+                    if GlobalForSubdivide.is_real_side_part(side, part, (border0, border1, border2, border3)):
+                        sequence_of_xys.append(self.generate_triangle(side, part))
+        else:
+            for side in (0, 2):
+                for part in range(2):
+                    if GlobalForSubdivide.is_real_side_part(side, part, (border0, border1, border2, border3)):
+                        sequence_of_xys.append(self.generate_rect(side, part))
+        for side in range(4):
+            if GlobalForSubdivide.is_real_side_part(side, 0, (border0, border1, border2, border3)) or\
+            GlobalForSubdivide.is_real_side_part(side, 1, (border0, border1, border2, border3)):
+                sequence_of_xys.append(self.generate_strip(side))
+        for xy1, xy2 in chain.from_iterable(sequence_of_xys):
+            self.add_real_curve(xy1, xy2, border0, border1, border2, border3, empties_to_coplanar_collinear, collection, obj_for_mirror)
+        for empty_obj, end_name in empties_to_coplanar_collinear:
+            if end_name is not None:
+                new_end = empty_obj.greg_empty_settings.curve_ends[end_name]
+                coplanar_collinear_add_one_end(empty_obj, collection, new_end)
+            else:
+                coplanar_collinear(empty_obj, collection)
+            for end in empty_obj.greg_empty_settings.curve_ends:
+                add_hook(end, context)
+
+def coplanar_collinear_add_one_end(empty_obj, collection, new_end):
+    for end in empty_obj.greg_empty_settings.curve_ends:
+        apply_hook(end)
+    
+    for end1 in empty_obj.greg_empty_settings.curve_ends:
+        if end1 != new_end:
+            check_ends_collinear(end1, new_end)
+    collinear_groups = []
+    used_dict = {end.name: False for end in empty_obj.greg_empty_settings.curve_ends}
+    for end in empty_obj.greg_empty_settings.curve_ends:
+        if not end.is_collinear:
+            collinear_groups.append([end])
+        else:
+            if used_dict[end.name] == False:
+                used_dict[end.name] = True
+                collinear_groups.append([end])
+                for basic_end in end.collinear_to:
+                    collinear_end_name = basic_end.name
+                    used_dict[collinear_end_name] = True
+                    collinear_groups[-1].append(empty_obj.greg_empty_settings.curve_ends[collinear_end_name])
+    sets_and_vectors = []
+    for i, ends1 in enumerate(collinear_groups):
+        for j, ends2 in enumerate(collinear_groups[:i]):
+            for ends3 in collinear_groups[:j]:
+                if new_end in ends1 or new_end in ends2 or new_end in ends3:
+                    res = check_ends_coplanar(ends1, ends2, ends3, empty_obj, collection)
+                    if res is not None:
+                        sets_and_vectors.append((set(ends1).union(set(ends2)).union(set(ends3)), res))
+    final_sets_and_vectors = []
+    for se, vec in sets_and_vectors:
+        i = 0
+        added = False
+        while i < len(final_sets_and_vectors) and not added:
+            if are_collinear(vec, final_sets_and_vectors[i][1]):
+                final_sets_and_vectors[i][0] = final_sets_and_vectors[i][0].union(se)
+                added = True
+            i += 1
+        if not added:
+            final_sets_and_vectors.append([se.copy(), vec])
+    for se, vec in final_sets_and_vectors:
+        common_arrows = None
+        for end in se:
+            if end != new_end:
+                if common_arrows is None:
+                    common_arrows = set(vec.arrow for vec in end.coplanar_vectors)
+                else:
+                    common_arrows = common_arrows.intersection(set(vec.arrow for vec in end.coplanar_vectors))
+        if len(common_arrows) > 0:
+            target_arrow = common_arrows[0]
+            new_end.is_coplanar = True
+            end_setting = new_end.coplanar_vectors.add()
+            end_setting.arrow = target_arrow
+            end_setting.name = target_arrow.greg_arrow_settings.name
+            arrow_setting = target_arrow.greg_arrow_settings.coplanars.add()
+            arrow_setting.name = new_end.name
+            arrow_setting.curve = new_end.basic_end.curve
+            arrow_setting.end = new_end.basic_end.end
+        else:
+            add_coplanar_arrow(se, vec, empty_obj, collection)
+    
+    for end in empty_obj.greg_empty_settings.curve_ends:
+        add_hook(end)
+
+
+class MiddlePoint:
+    def __init__(self, co: mathutils.Vector):
+        self.co = co
+        self.handle_up: mathutils.Vector
+        self.handle_down: mathutils.Vector
+        self.handle_left: mathutils.Vector
+        self.handle_right: mathutils.Vector
+        self.empty = None
+        self.mirrored_co_s = [co]
+        self.other_points_and_mirrors = set()
+        self.total = co.copy()
+    
+    def total_from_mirrored(self):
+        if len(self.mirrored_co_s) > 1:
+            self.total = self.mirrored_co_s[0].copy()
+            for new_co in self.mirrored_co_s[1:]:
+                self.total += new_co
+            self.total /= len(self.mirrored_co_s)
+    
+    def set_final_coords(self):
+        new_co_s = []
+        for item in self.other_points_and_mirrors:
+            if len(item) == 2:
+                point, mirror = item
+                new_co_s.append(mirror_vec(point.total, *mirror))
+            elif len(item) == 3:
+                point, mirror1, mirror2 = item
+                new_co_s.append(mirror_vec(mirror_vec(point.total, *mirror1), *mirror2))
+        new_total = self.total.copy()
+        for new_co in new_co_s:
+            new_total += new_co
+        if new_co_s:
+            new_total /= (len(new_co_s) + 1)
+        self.co = new_total
+
+class PointForSubdivide:
+    def __init__(self, co, empty, number):
+        self.co = co
+        self.handle_right = None
+        self.handle_left = None
+        self.handle_other = None
+        self.empty = empty
+        self.curves = {}
+        self.number = number
+
+class CurveForSubdivide:
+    def __init__(self, p1, p2, is_mirrored, original_curve, mirror_sequence=None):
+        self.points = p1, p2
+        self.is_mirrored = is_mirrored
+        self.original_curve = original_curve
+        if mirror_sequence is None:
+            self.mirror_sequence = []
+        else:
+            self.mirror_sequence = mirror_sequence
+
+class MirrorSequenceItem:
+    def __init__(self, mirror_object, axis):
+        self.mirror_object = mirror_object
+        self.axis = axis
+
+class GregSubdivide(bpy.types.Operator):
+    """Gregory: subdivide loop of curves"""
+    bl_idname = "object.greg_sibdivide"
+    bl_label = "Subdivide loop of curves"         # Display name in the interface.
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context):
+        if context.mode != "OBJECT":
+            return False
+        if not context.selected_objects:
+            return False
+        collection = get_greg_collection(context.selected_objects[0])
+        curves = []
+        empties = []
+        for obj in context.selected_objects:
+            if not obj.greg_empty_settings.used_for_greg and not obj.greg_curve_settings.used_for_greg:
+                return False
+            if get_greg_collection(obj) != collection:
+                return False
+            if obj.greg_empty_settings.used_for_greg:
+                empties.append(obj)
+                if len(empties) > 4:
+                    return False
+            elif obj.greg_curve_settings.used_for_greg:
+                curves.append(obj)
+        if len(curves) == 0 or len(empties) == 0:
+            return False
+
+        return True
+
+    def execute(self, context: bpy.types.Context):        # execute() is called when running the operator.
+        empties = []
+        curves = []
+        corners = []
+        collection = get_greg_collection(context.selected_objects[0])
+        for obj in context.selected_objects:
+            if obj.greg_curve_settings.used_for_greg:
+                curves.append(obj)
+                empties.extend((obj.greg_curve_settings.end1_empty, obj.greg_curve_settings.end1_empty))
+            elif obj.greg_empty_settings.used_for_greg:
+                corners.append(obj)
+        empties = set(empties) # remove duplicates
+        g_list = GlobalForSubdivide()
+        for curve in curves:
+            g_list.add_curve_and_mirrors(curve)
+        optimal_quad = g_list.find_borders(corners)
+        if optimal_quad == False:
+            raise ValueError("invalid corners or borders selected!")
+        for empty_obj in empties:
+            for end in empty_obj.greg_empty_settings.curve_ends:
+                apply_hook(end)
+                add_hook(end)
+        g_list.subdivide(optimal_quad)
+        g_list.add_real_curves(collection, context)
+        return {'FINISHED'}    
+
+def add_greg_subdivide_func(self, context: bpy.types.Context):
+    self.layout.operator(GregSubdivide.bl_idname)
     
 class UnsetCurveMirrorBridge(bpy.types.Operator):
     """Gregory: unset curve a bridge through mirror"""
@@ -3683,6 +4735,8 @@ class UnsetCurveMirrorBridge(bpy.types.Operator):
             return False
         obj = context.active_object
         if obj is None:
+            return False
+        if len(context.selected_objects) != 1:
             return False
         return obj.greg_curve_settings.is_mirror_bridge
 
@@ -3699,8 +4753,10 @@ class UnsetCurveMirrorBridge(bpy.types.Operator):
             other = curve_settings.end2_empty
             target = curve_settings.end1_empty
         curve_settings.bridge_mirror_other_i = 0
-        other.greg_empty_settings.mirror_bridge_other_name = ""
-        target.greg_empty_settings.mirror_bridge_other_name = ""
+        other_name = other.greg_empty_settings.name
+        target_name = target.greg_empty_settings.name
+        other.greg_empty_settings.mirror_bridge_other_names.remove(other.greg_empty_settings.mirror_bridge_other_names.find(target_name))
+        target.greg_empty_settings.mirror_bridge_other_names.remove(target.greg_empty_settings.mirror_bridge_other_names.find(other_name))
         curve_name = curve_settings.name
         for constraint in other.constraints:
             if constraint.name == f"copy_location_{curve_name}":
@@ -3914,10 +4970,13 @@ def register():
     bpy.utils.register_class(OBJECT_PT_greg_curve_properties)
     bpy.utils.register_class(OBJECT_PT_greg_curve_properties1)
     bpy.utils.register_class(OBJECT_PT_greg_curve_properties2)
+    bpy.utils.register_class(GregSubdivide)
+    bpy.types.VIEW3D_MT_object_context_menu.append(add_greg_subdivide_func)
 
     bpy.app.handlers.depsgraph_update_post.append(on_depsgraph_update)
     
 def unregister():
+    bpy.utils.unregister_class(GregSubdivide)
     bpy.utils.unregister_class(OBJECT_PT_greg_curve_properties2)
     bpy.utils.unregister_class(OBJECT_PT_greg_curve_properties1)
     bpy.utils.unregister_class(OBJECT_PT_greg_curve_properties)
