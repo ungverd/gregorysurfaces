@@ -27,7 +27,7 @@ from itertools import chain
 import bpy
 import bmesh
 import mathutils
-from typing import List, Optional, Tuple, Callable
+from typing import List, Optional, Tuple, Dict
 from enum import Enum
 import math
 
@@ -972,37 +972,12 @@ class Spline:
 
 class Segment:
     def __init__(self, p1: Point, p2: Point, glist: "GlobalList"):
-        self.quads: List[Quad | BigQuad] = []
         self.p1 = p1
         self.p2 = p2
         self.p1.post_seg = self
         self.p2.prev_seg = self
         self.finished = False
-        self.verts: Optional[List[int]] = None
         glist.add_segment(self)
-        self.b1: Optional[mathutils.Vector] = None
-
-    def add_quad(self, quad: "Quad | BigQuad"):
-        self.quads.append(quad)
-        if len(self.quads) == 2:
-            self.finished = True
-
-    def calculate_midpoint(self):
-        p0 = self.p1.bpoint.coords
-        p1 = p0 + self.p1.handle_right
-        p3 = self.p2.bpoint.coords
-        p2 = p3 + self.p2.handle_left
-        return 1/8 * (p0 + 3*p1 + 3*p2 + p3)
-    
-    def extract_control_points(self, glist: "GlobalList"):
-        k0 = self.p1.bpoint.coords
-        k3 = self.p2.bpoint.coords
-        k1 = self.p1.handle_right + k0
-        k2 = self.p2.handle_left + k3
-        return k0, k1, k2, k3
-
-    def calculate_verts(self, glist: "GlobalList", d: "DependantsOfResolution|DependantsOfResolution_np"):
-        self.verts = add_border(*self.extract_control_points(glist), glist, d)
         
 
     @staticmethod
@@ -1016,29 +991,6 @@ class Segment:
         yield segs[-1].p2
         for seg in reversed(segs):
             yield seg.p1
-
-    def calculate_b1(self,
-                     k0: float,
-                     k1: float,
-                     h0: float,
-                     h1: float,
-                     b0: mathutils.Vector,
-                     b2: mathutils.Vector,
-                     s0: mathutils.Vector,
-                     s1: mathutils.Vector,
-                     s2: mathutils.Vector,
-                     a0: mathutils.Vector,
-                     a3: mathutils.Vector,
-                     ve: mathutils.Vector):
-        b1_ref = (b0 + b2) / 2
-        #a1_ref = (a0.length + a3.length) / 2
-        #ve = ve.normalized() * a1_ref
-        ve = ve * 0.5
-        res = (-8/3*ve - a0 - k1*b0 - 2*h0*s1 - h1*s0 - k0*b2 - h0*s2 - 2*h1*s1 - a3) / (2*(k0 + k1))
-                    #res = res * (b0_ref.length_squared / res.dot(b0_ref))
-        self.b1 = (res + b1_ref) * 0.5
-        #self.b1 = res
-        return self.b1
 
 
 def get_y_normalized(p: mathutils.Vector, x: mathutils.Vector):
@@ -1100,798 +1052,12 @@ def make_collinear(v1: mathutils.Vector, v2: mathutils.Vector):
     return new_v1, new_v2
 
 
-
-
-
-class BigQuad:
-    def __init__(self,
-                 edg1: List[Segment],
-                 edg2: List[Segment],
-                 edg3: List[Segment],
-                 edg4: List[Segment],
-                 dir1: bool,
-                 dir2: bool,
-                 dir3: bool,
-                 dir4: bool,
-                 glist: "GlobalList"):
-        self.v_grid: List[mathutils.Vector]
-        self.xtot = len(edg1) + 1
-        self.ytot = len(edg2) + 1
-        self.edges = [edg1, edg2, edg3, edg4]
-        self.dirs = [dir1, dir2, dir3, dir4]
-        self.points_grid: List[List[MiddlePoint]] = []
-        self.corner_handles: List[Tuple[mathutils.Vector, mathutils.Vector]] = []
-        for edg in self.edges:
-            for segment in edg:
-                segment.add_quad(self)
-        glist.add_big_quad(self)
-
-    @staticmethod
-    def extract_first_handle(edge: List[Segment]):
-        return edge[0].p1.handle_right
-
-    @staticmethod
-    def extract_last_handle(edge: List[Segment]):
-        return edge[-1].p2.handle_left
-
-    def extract_corner_handles(self):
-        # edges[0]
-        if self.dirs[1]:
-            handle_right_0 = BigQuad.extract_first_handle(self.edges[1])
-        else:
-            handle_right_0 = BigQuad.extract_last_handle(self.edges[1])
-        if self.dirs[3]:
-            handle_left_0 = BigQuad.extract_first_handle(self.edges[3])
-        else:
-            handle_left_0 = BigQuad.extract_last_handle(self.edges[3])
-        self.corner_handles.append((handle_left_0, handle_right_0))
-
-        # edges[1]
-        handle_left_1 = BigQuad.extract_last_handle(self.edges[0])
-        if self.dirs[2]:
-            handle_right_1 = BigQuad.extract_last_handle(self.edges[2])
-        else:
-            handle_right_1 = BigQuad.extract_first_handle(self.edges[2])
-        if not self.dirs[1]:
-            handle_left_1, handle_right_1 = handle_right_1, handle_left_1
-        self.corner_handles.append((handle_left_1, handle_right_1))
-
-        # edges[2]
-        if self.dirs[1]:
-            handle_right_2 = BigQuad.extract_last_handle(self.edges[1])
-        else:
-            handle_right_2 = BigQuad.extract_first_handle(self.edges[1])
-        if self.dirs[3]:
-            handle_left_2 = BigQuad.extract_last_handle(self.edges[3])
-        else:
-            handle_left_2 = BigQuad.extract_first_handle(self.edges[3])
-        if not self.dirs[2]:
-            handle_left_2, handle_right_2 = handle_right_2, handle_left_2
-        self.corner_handles.append((handle_left_2, handle_right_2))
-
-        # edges[3]
-        handle_left_3 = BigQuad.extract_first_handle(self.edges[0])
-        if self.dirs[2]:
-            handle_right_3 = BigQuad.extract_first_handle(self.edges[2])
-        else:
-            handle_right_3 = BigQuad.extract_last_handle(self.edges[2])
-        if not self.dirs[3]:
-            handle_left_3, handle_right_3 = handle_right_3, handle_left_3
-        self.corner_handles.append((handle_left_3, handle_right_3))
-
-    @staticmethod
-    def extract_coords(edg: List[Segment], dir: bool):
-        if dir:
-            res = [p.bpoint.coords for p in Segment.iterate_direct(edg)]
-        else:
-            res = [p.bpoint.coords for p in Segment.iterate_reversed(edg)]
-        return res
-
-    def extract_handles(self, edg: List[Segment], i: int):
-        handles: List[Optional[mathutils.Vector]] = [None] * (len(edg) + 1)
-        handles[0] = self.corner_handles[i][0]
-        handles[-1] = self.corner_handles[i][1]
-        for j, p in enumerate(Segment.iterate_direct(edg)):
-            if j not in (0, len(edg)):
-                if len(p.bpoint.points) != 1:
-                    point_handles: List[mathutils.Vector] = []
-                    for pp in p.bpoint.points:
-                        if pp != p:
-                            if pp.post_seg and not pp.prev_seg:
-                                point_handles.append(pp.handle_left)
-                            elif pp.prev_seg and not pp.post_seg:
-                                point_handles.append(pp.handle_right)
-                    if len(point_handles) != 0:
-                        if len(point_handles) == 1:
-                            handles[j] = point_handles[0]
-                        else:
-                            total = point_handles[0]
-                            for h in point_handles[1:]:
-                                total += h
-                            handles[j] = total/len(point_handles)
-        return handles
-
-    @staticmethod
-    def populate_handles(handles: List[Optional[mathutils.Vector]]) -> List[mathutils.Vector]:
-        i = 0
-        count = 1
-        while i < (len(handles) - 1):
-            p1 = handles[i]
-            assert isinstance(p1, mathutils.Vector)
-            count = 1
-            p2 = handles[i + count]
-            while p2 is None:
-                count += 1
-                p2 = handles[i + count]
-            for j in range(i + 1, i + count):
-                factor = j / count
-                handles[j] = p1.lerp(p2, factor)
-            i += count
-        res_handles = [h for h in handles if h is not None]
-        assert len(res_handles) == len(handles)
-        return res_handles
-
-    def calc_init_coords(self,
-                         i: int,
-                         right: bool,
-                         horisontal: bool,
-                         h1: bool,
-                         h: List[mathutils.Vector]):
-        tot = self.ytot if horisontal else self.xtot
-        second_coord = 0 if h1 else tot - 1
-        first_coord1 = i - 1 if right else i + 1
-        first_coord2 = i + 1 if right else i - 1
-        coords1 = [first_coord1, second_coord]
-        coords2 = [first_coord2, second_coord]
-        coords3 = [i, second_coord]
-        if not horisontal:
-            for l in (coords1, coords2, coords3):
-                l.reverse()
-        for l in (coords1, coords2, coords3):
-            l.append(self.xtot)
-        matrix = calc_basis(self.v_grid[XY(*coords1)],
-                            self.v_grid[XY(*coords2)],
-                            self.v_grid[XY(*coords3)],
-                            h[first_coord1],
-                            h[i],
-                            False)
-        return get_coords_from_vec_and_basis_matrix(h[i], matrix)
-
-    def handle_fin(self,
-                   i: int,
-                   j: int,
-                   vh1: List[mathutils.Vector],
-                   vh2: List[mathutils.Vector],
-                   coords1: mathutils.Vector,
-                   coords2: mathutils.Vector,
-                   right: bool,
-                   horisontal: bool):
-        xtot = self.xtot if horisontal else self.ytot
-        ytot = self.ytot if horisontal else self.xtot
-        coord1 = i - 1 if right else i + 1
-        coord2 = i + 1 if right else i - 1
-        c1 = [coord1, j]
-        c2 = [coord2, j]
-        c3 = [i, j]
-        h_side = vh1[j].lerp(-vh2[j], (i - 1)/(xtot - 1)) if right else -vh1[j].lerp(vh2[j], (i + 1)/(xtot - 1))
-        if not horisontal:
-            for c in (c1, c2, c3):
-                c.reverse()
-        for c in (c1, c2, c3):
-            c.append(self.xtot)
-        dest_m = calc_basis(self.v_grid[XY(*c1)],
-                             self.v_grid[XY(*c2)],
-                             self.v_grid[XY(*c3)],
-                             h_side)
-        coords_fin = coords1.lerp(coords2, j/(ytot - 1))
-        return get_vec_from_coords_and_basis_matrix(coords_fin, dest_m)
-
-    @staticmethod
-    def add_point_to_curve(point: bpy.types.BezierSplinePoint,
-                           co: mathutils.Vector,
-                           handle_left: mathutils.Vector,
-                           handle_right: mathutils.Vector):
-        point.co = co
-        point.handle_left = handle_left + co
-        point.handle_right = handle_right + co
-        point.handle_left_type = "ALIGNED"
-        point.handle_right_type = "ALIGNED"
-
-    def add_new_quads(self, glist: "GlobalList"):
-        glist.big_quads.remove(self)
-        for side in self.edges:
-            for edg in side:
-                edg.quads.remove(self)
-        horisontal_splines: List[Spline] = []
-        vertical_splines: List[Spline] = []
-        for i in range(1, self.xtot - 1):
-            spline = Spline(glist)
-            vertical_splines.append(spline)
-            for j in range(self.ytot):
-                p = self.points_grid[j][i]
-                spline.add_point(p.co, p.handle_up + p.co, p.handle_down + p.co)
-        for j in range(1, self.ytot - 1):
-            spline = Spline(glist)
-            horisontal_splines.append(spline)
-            for i in range(self.xtot):
-                p = self.points_grid[j][i]
-                spline.add_point(p.co, p.handle_left + p.co, p.handle_right + p.co)
-        for i in range(self.xtot - 1):
-            for j in range(self.ytot - 1):
-                seg1 = horisontal_splines[j - 1].segments[i] if j > 0 else self.edges[0][i]
-                dir1 = True
-                if j < (self.ytot - 2):
-                    seg3 = horisontal_splines[j].segments[i]
-                    dir3 = True
-                else:
-                    dir3 = self.dirs[2]
-                    if dir3:
-                        seg3 = self.edges[2][i]
-                    else:
-                        seg3 = self.edges[2][-i - 1]
-                if i > 0:
-                    dir4 = True
-                    seg4 = vertical_splines[i - 1].segments[j]
-                else:
-                    dir4 = self.dirs[3]
-                    if dir4:
-                        seg4 = self.edges[3][j]
-                    else:
-                        seg4 = self.edges[3][-j - 1]
-                if i < (self.xtot - 2):
-                    seg2 = vertical_splines[i].segments[j]
-                    dir2 = True
-                else:
-                    dir2 = self.dirs[1]
-                    if dir2:
-                        seg2 = self.edges[1][j]
-                    else:
-                        seg2 = self.edges[1][-j - 1]
-                Quad(seg1, seg2, seg3, seg4, dir1, dir2, dir3, dir4, glist)
-
-    def subdivide(self, obj: bpy.types.ID, glist: "GlobalList"):
-        v1 = BigQuad.extract_coords(self.edges[0], True)
-        v2 = BigQuad.extract_coords(self.edges[2], self.dirs[2])
-        rv1 = BigQuad.extract_coords(self.edges[3], self.dirs[3])
-        rv2 = BigQuad.extract_coords(self.edges[1], self.dirs[1])
-        self.v_grid = grid_fill(v1, v2, rv1, rv2)
-        for i in range(self.ytot):
-            row: List[MiddlePoint] = []
-            for j in range(self.xtot):
-                row.append(MiddlePoint(self.v_grid[XY(j, i, self.xtot)]))
-            self.points_grid.append(row)
-        self.extract_corner_handles()
-        cross_hs = [BigQuad.populate_handles(self.extract_handles(edg, i)) for i, edg in enumerate(self.edges)]
-        for i in range(4):
-            if not self.dirs[i]:
-                cross_hs[i].reverse()
-        cross_h1 = cross_hs[0]
-        cross_h2 = cross_hs[2]
-        cross_vh1 = cross_hs[3]
-        cross_vh2 = cross_hs[1]
-        h_right_left = [
-            (
-                [p.handle_right for p in Segment.iterate_direct(edge)] if d else 
-                [p.handle_left for p in Segment.iterate_reversed(edge)],
-                [p.handle_left for p in Segment.iterate_direct(edge)] if d else
-                [p.handle_right for p in Segment.iterate_reversed(edge)]
-            ) for edge, d in zip(self.edges, self.dirs)]
-        h1_right = h_right_left[0][0]
-        h1_left = h_right_left[0][1]
-        h2_right = h_right_left[2][0]
-        h2_left= h_right_left[2][1]
-        vh1_down = h_right_left[3][0]
-        vh1_up = h_right_left[3][1]
-        vh2_down = h_right_left[1][0]
-        vh2_up = h_right_left[1][1]
-        horisontal = True
-        for i in range(1, self.xtot - 1):
-            coords_right1 = self.calc_init_coords(i, True, horisontal, True, h1_right)
-            coords_right2 = self.calc_init_coords(i, True, horisontal, False, h2_right)
-            coords_left1 = self.calc_init_coords(i, False, horisontal, True, h1_left)
-            coords_left2 = self.calc_init_coords(i, False, horisontal, False, h2_left)
-            for j in range(1, self.ytot - 1):
-                res_right = self.handle_fin(i, j, cross_vh1, cross_vh2, coords_right1, coords_right2, True, horisontal)
-                res_left = self.handle_fin(i, j, cross_vh1, cross_vh2, coords_left1, coords_left2, False, horisontal)
-                collinear_right, collinear_left = make_collinear(res_right, res_left)
-                self.points_grid[j][i].handle_right = collinear_right
-                self.points_grid[j][i].handle_left = collinear_left
-        vertical = False
-        for j in range(1, self.ytot - 1):
-            coords_down1 = self.calc_init_coords(j, True, vertical, True, vh1_down)
-            coords_down2 = self.calc_init_coords(j, True, vertical, False, vh2_down)
-            coords_up1 = self.calc_init_coords(j, False, vertical, True, vh1_up)
-            coords_up2 = self.calc_init_coords(j, False, vertical, False, vh2_up)
-            for i in range(1, self.xtot - 1):
-                res_down = self.handle_fin(j, i, cross_h1, cross_h2, coords_down1, coords_down2, True, vertical)
-                res_up = self.handle_fin(j, i, cross_h1, cross_h2, coords_up1, coords_up2, False, vertical)
-                collinear_down, collinear_up = make_collinear(res_down, res_up)
-                self.points_grid[j][i].handle_down = collinear_down
-                self.points_grid[j][i].handle_up = collinear_up
-        for i in range(self.xtot):
-            self.points_grid[0][i].handle_down = cross_h1[i]
-            self.points_grid[0][i].handle_up = -cross_h1[i]
-            self.points_grid[self.ytot - 1][i].handle_down = -cross_h2[i]
-            self.points_grid[self.ytot - 1][i].handle_up = cross_h2[i]
-        for i in range(self.ytot):
-            self.points_grid[i][0].handle_right = cross_vh1[i]
-            self.points_grid[i][0].handle_left = -cross_vh1[i]
-            self.points_grid[i][self.xtot - 1].handle_right = -cross_vh2[i]
-            self.points_grid[i][self.xtot - 1].handle_left = cross_vh2[i]
-        for i in range(1, self.xtot - 1):
-            spline = obj.data.splines.new("BEZIER")
-            spline.bezier_points.add(self.ytot - 1)
-            for j, point in zip(range(self.ytot), spline.bezier_points):
-                p = self.points_grid[j][i]
-                BigQuad.add_point_to_curve(point, p.co, p.handle_up, p.handle_down)
-        for j in range(1, self.ytot - 1):
-            spline = obj.data.splines.new("BEZIER")
-            spline.bezier_points.add(self.xtot - 1)
-            for i, point in zip(range(self.xtot), spline.bezier_points):
-                p = self.points_grid[j][i]
-                BigQuad.add_point_to_curve(point, p.co, p.handle_left, p.handle_right)
-        self.add_new_quads(glist)
-
-
-class Quad:
-    @staticmethod
-    def step_left(segments: List[Segment], s: Segment):
-        p1 = s.p1
-        prev_seg = p1.prev_seg
-        if prev_seg is None:
-            return None
-        if prev_seg not in segments:
-            return None
-        return prev_seg
-
-    @staticmethod
-    def step_right(segments: List[Segment], s: Segment):
-        p2 = s.p2
-        post_seg = p2.post_seg
-        if post_seg is None:
-            return None
-        if post_seg not in segments:
-            return None
-        return post_seg
-
-    @staticmethod
-    def move_along_spline(segments: List[Segment], s0: Segment):
-        edg: List[Segment] = [s0]
-        s = s0
-        bps: List[BigPoint] = []
-        while s is not None:
-            s = Quad.step_right(segments, s)
-            if s == s0:
-                raise ValueError("cycling!")
-            if s is not None:
-                edg.append(s)
-                bps.append(s.p1.bpoint)
-        s = s0
-        while s is not None:
-            s = Quad.step_left(segments, s)
-            if s == s0:
-                raise ValueError("cycling!")
-            if s is not None:
-                edg = [s] + edg
-                bps = [s.p2.bpoint] + bps
-        return edg, bps
-
-    @staticmethod
-    def verify_segment_connects_point(s: Segment, p: Point) -> bool:
-        for point in p.bpoint.points:
-            if point in (s.p1, s.p2):
-                return True
-        return False
-
-    @staticmethod
-    def get_neighbours(segments: List[Segment], edg: List[Segment]) -> List[Segment]:
-        edges = (edg[0], edg[-1])
-        ret: List[Optional[Segment]] = [None, None]
-        right_added = False
-        left_added = False
-        points = [edges[0].p1, edges[1].p2]
-        for i in range(2):
-            e = edges[i]
-            found = False
-            n = 0
-            while not found:
-                s = segments[n]
-                if s == e:
-                    found = True
-                    if not left_added:
-                        prev_seg = segments[n-1]
-                        if prev_seg not in edg:
-                            if Quad.verify_segment_connects_point(prev_seg, points[i]):
-                                ret[i] = prev_seg
-                                left_added = True
-                    if not right_added:
-                        nn = n + 1
-                        if nn == len(segments):
-                            nn = 0
-                        next_seg = segments[nn]
-                        if segments[nn] not in edg:
-                            if Quad.verify_segment_connects_point(next_seg, points[i]):
-                                ret[i] = segments[nn]
-                                right_added = True
-                n += 1
-        ret2 = [seg for seg in ret if seg is not None]
-        assert len(ret2) == 2
-        return ret2
-
-    @staticmethod
-    def steps_dividing_edges_right(p: Point, n: int):
-        for _ in range(n):
-            p_post = p.post_seg
-            if p_post is None:
-                return None
-            p = p_post.p2
-        return p.bpoint
-
-    @staticmethod
-    def steps_dividing_edges_left(p: Point, n: int):
-        for _ in range(n):
-            p_prev = p.prev_seg
-            if p_prev is None:
-                return None
-            p = p_prev.p1
-        return p.bpoint
-
-    @staticmethod
-    def verify_dividing_edges(bp1: BigPoint, bp2: BigPoint, n: int):
-        for p in bp1.points:
-            s1 = Quad.steps_dividing_edges_right(p, n)
-            if s1 is not None:
-                if s1 == bp2:
-                    return True
-            s2 = Quad.steps_dividing_edges_left(p, n)
-            if s2 is not None:
-                if s2 == bp2:
-                    return True
-        return False
-
-    @staticmethod
-    def turn(p: Point):
-        for pp in p.bpoint.points:
-            if pp != p:
-                yield pp
-
-    @staticmethod
-    def little_quads_step_left(p: Point):
-        if p.prev_seg:
-            return p.prev_seg.p1
-        return None
-
-    @staticmethod
-    def little_quads_step_right(p: Point):
-        if p.post_seg:
-            return p.post_seg.p2
-        return None
-
-    @staticmethod
-    def step(p: Point,
-            func: Callable[[Point], Optional[Point]],
-            s1: int,
-            s2: int,
-            bp_s1: BigPoint,
-            bp_s2: BigPoint) -> bool | Point:
-        res = func(p)
-        if res:
-            for pp in Quad.turn(res):
-                for s, bp in zip((s1, s2), (bp_s1, bp_s2)):
-                    if s != 0:
-                        for f in (Quad.steps_dividing_edges_left, Quad.steps_dividing_edges_right):
-                            if f(pp, s) == bp:
-                                return True
-            return res
-        return False
-
-    @staticmethod
-    def steps(p: Point,
-              n: int,
-              end_bps_s1: List[BigPoint],
-              end_bps_s2: List[BigPoint],
-              s1: int,
-              s2: int,
-              func: Callable[[Point], Optional[Point]]) -> bool:
-        res = p
-        for i in range(n):
-            if i != (n - 1) or (s1 != 0 and s2 != 0):
-                res = Quad.step(res, func, s1, s2, end_bps_s1[i], end_bps_s2[i])
-                if res in (True, False):
-                    return res
-        return False
-
-    @staticmethod
-    def verify_little_quads(p1: Point,
-                            end_bps_s1: List[BigPoint],
-                            end_bps_s2: List[BigPoint],
-                            s1: int,
-                            s2: int,
-                            n: int):
-        for p in Quad.turn(p1):
-            for func in (Quad.little_quads_step_left, Quad.little_quads_step_right):
-                if Quad.steps(p, n, end_bps_s1, end_bps_s2, s1, s2, func):
-                    return True
-        return False
-
-    @staticmethod
-    def get_dir_from_right(edg: List[Segment], segments: List[Segment]):
-        bp = edg[-1].p2.bpoint
-        for p in bp.points:
-            post = p.post_seg
-            if post is not None:
-                if post in segments:
-                    return True
-        return False
-
-    @staticmethod
-    def get_dir_from_left(edg: List[Segment], segments:List[Segment]):
-        bp = edg[0].p1.bpoint
-        for p in bp.points:
-            prev = p.prev_seg
-            if prev is not None:
-                if prev in segments:
-                    return True
-        return False
-
-    @staticmethod
-    def verify_div(b1: List[BigPoint], b2: List[BigPoint], dir1: bool, dir2: bool, n: int):
-        for i in range(len(b1)):
-            if dir1 == dir2:
-                if Quad.verify_dividing_edges(b1[i], b2[i], n):
-                    return True
-            else:
-                if Quad.verify_dividing_edges(b1[i], b2[-i-1], n):
-                    return True
-        return False
-
-    @staticmethod
-    def extract_points(edge: List[Segment], dir: bool) -> List[Point]:
-        points: List[Point] = []
-        if edge:
-            if dir:
-                points = list(Segment.iterate_direct(edge))
-            else:
-                points = list(Segment.iterate_reversed(edge))
-        return points
-
-    @staticmethod
-    def verify_and_init(segments: List[Segment], glist: "GlobalList") -> bool:
-        le = len(segments)
-        if le < 4:
-            return False
-        if (le % 2) == 1:
-            return False
-        for segment in segments:
-            if segment.finished:
-                return False
-        edg1, b1 = Quad.move_along_spline(segments, segments[0])
-        ret = Quad.get_neighbours(segments, edg1)
-        edg2, b2 = Quad.move_along_spline(segments, ret[1])
-        edg4, b4 = Quad.move_along_spline(segments, ret[0])
-        if len(edg2) != len(edg4):
-            return False
-        if le - len(edg2)*2 != len(edg1)*2:
-            return False
-        ret = Quad.get_neighbours(segments, edg2)
-        if ret[0] not in edg1:
-            seg = ret[0]
-        else:
-            seg = ret[1]
-        edg3, b3 = Quad.move_along_spline(segments, seg)
-        if le != len(edg1) + len(edg2) + len(edg3) + len(edg4):
-            return False
-        dir1 = True
-        dir2 = Quad.get_dir_from_right(edg1, segments)
-        dir4 = not Quad.get_dir_from_left(edg1, segments)
-        if dir2:
-            dir3 = not Quad.get_dir_from_right(edg2, segments)
-        else:
-            dir3 = Quad.get_dir_from_left(edg2, segments)
-        if le == 4:
-            Quad(edg1[0], edg2[0], edg3[0], edg4[0], dir1, dir2, dir3, dir4, glist)
-            return True
-        if Quad.verify_div(b1, b3, dir1, dir3, len(edg2)) or Quad.verify_div(b2, b4, dir2, dir4, len(edg1)):
-            return False
-        points1 = Quad.extract_points(edg1, True)
-        points2 = Quad.extract_points(edg2, dir2)
-        bpoints2 = [p.bpoint for p in points2]
-        points3 = Quad.extract_points(edg3, dir3)
-        points4 = Quad.extract_points(edg4, dir4)
-        bpoints4 = [p.bpoint for p in points4]
-        le_e1 = len(edg1)
-        n = len(edg2)
-        for i, p in enumerate(points1):
-            if Quad.verify_little_quads(p, bpoints4[1:], bpoints2[1:], i, le_e1 - i, n):
-                return False
-        if Quad.steps(points1[0], n, bpoints2[1:], bpoints2[1:], le_e1, 0, Quad.little_quads_step_left):
-            return False
-        if Quad.steps(points1[-1], n, bpoints4[1:], bpoints4[1:], le_e1, 0, Quad.little_quads_step_right):
-            return False
-        bpoints2.reverse()
-        bpoints4.reverse()
-        for i, p in enumerate(points3):
-            if Quad.verify_little_quads(p, bpoints4[1:], bpoints2[1:], i, le_e1 - i, n):
-                return False
-        if Quad.steps(points3[0], n, bpoints2[1:], bpoints2[1:], le_e1, 0,
-                      Quad.little_quads_step_right if dir3 else Quad.little_quads_step_left):
-            return False
-        if Quad.steps(points3[-1], n, bpoints4[1:], bpoints4[1:], le_e1, 0,
-                      Quad.little_quads_step_left if dir3 else Quad.little_quads_step_right):
-            return False
-        BigQuad(edg1, edg2, edg3, edg4, dir1, dir2, dir3, dir4, glist)
-        return True
-
-    def __init__(self,
-                 seg1: Segment,
-                 seg2: Segment,
-                 seg3: Segment,
-                 seg4: Segment,
-                 dir1: bool,
-                 dir2: bool,
-                 dir3: bool,
-                 dir4: bool,
-                 glist: "GlobalList"):
-        self.kk = [[mathutils.Vector((0,0,0)) for _ in range(4)] for __ in range(4)]
-        self.kk1 = [[mathutils.Vector((0,0,0)) for _ in range(2)] for __ in range(2)]
-        self.segments = [seg1, seg2, seg3, seg4]
-        self.directions = [dir1, dir2, dir3, dir4]
-        for seg in self.segments:
-            seg.add_quad(self)
-        glist.add_quad(self)
-
-    def get_edge_control_points(self, edge_num: int):
-        p1 = self.segments[edge_num].p1
-        p4 = self.segments[edge_num].p2
-        k1 = p1.bpoint.coords
-        k2 = k1 + p1.handle_right
-        k4 = p4.bpoint.coords
-        k3 = k4 + p4.handle_left
-        res = [k1, k2, k3, k4]
-        if not self.directions[edge_num]:
-            res.reverse()
-        return res
-
-    def calculate_coefs(self):
-        self.kk[0][0], self.kk[0][1], self.kk[0][2], self.kk[0][3] = self.get_edge_control_points(0)
-        self.kk[1][0], self.kk[2][0], self.kk[3][0] = self.get_edge_control_points(3)[1:]
-        self.kk[1][3], self.kk[2][3], self.kk[3][3] = self.get_edge_control_points(1)[1:]
-        self.kk[3][1], self.kk[3][2] = self.get_edge_control_points(2)[1:3]
-
-    def extract_first_handle(self, i: int):
-        if self.directions[i]:
-            return self.segments[i].p1.handle_right
-        return self.segments[i].p2.handle_left
-
-    def extract_last_handle(self, i: int):
-        if self.directions[i]:
-            return self.segments[i].p2.handle_left
-        return self.segments[i].p1.handle_right
-
-    def get_neighbour_quad(self, i: int):
-        seg = self.segments[i]
-        if len(seg.quads) == 1:
-            return None
-        res = [quad for quad in seg.quads if quad != self][0]
-        assert isinstance(res, Quad)
-        return res
-
-    def extract_a0_a3(self, i: int):
-        if i == 0:
-            a0 = self.extract_first_handle(3)
-            a3 = self.extract_first_handle(1)
-        elif i == 1:
-            a0 = self.extract_last_handle(0)
-            a3 = self.extract_last_handle(2)
-        elif i == 2:
-            a0 = self.extract_last_handle(3)
-            a3 = self.extract_last_handle(1)
-        elif i == 3:
-            a0 = self.extract_first_handle(0)
-            a3 = self.extract_first_handle(2)
-        else:
-            raise ValueError("wrong i")
-        return a0, a3
-
-    def calculate_coefs_along_segment(self, i: int):
-        a0, a3 = self.extract_a0_a3(i)
-        _, p1, p2, __ = self.get_edge_control_points(i)
-        neighbour_quad = self.get_neighbour_quad(i)
-        if neighbour_quad is None:
-            a1, a2 = Quad.calculate_free_coefs(a0, a3)
-        else:
-            s0 = self.extract_first_handle(i)
-            s1 = p2 - p1
-            s2 = -1 * self.extract_last_handle(i)
-            neighbour_i = neighbour_quad.segments.index(self.segments[i])
-            bb0, bb2 = neighbour_quad.extract_a0_a3(neighbour_i)
-            if self.directions[i] != neighbour_quad.directions[neighbour_i]:
-                bb0, bb2 = bb2, bb0
-            b0 = (bb0 - a0).normalized()
-            b2 = (bb2 - a3).normalized()
-            for v in (a0, a3, b0, b2, s0, s2):
-                if v.length < TH:
-                    a1, a2 = Quad.calculate_free_coefs(a0, a3)
-                    break
-            else:
-                if not are_coplanar(a0, b0, s0) or not are_coplanar(a3, s2, b2):
-                    a1, a2 = Quad.calculate_free_coefs(a0, a3)
-                elif b0.cross(s0).length < TH or b2.cross(s2).length < TH:
-                    a1, a2 = Quad.calculate_free_coefs(a0, a3)
-                else:
-                    k0, h0 = get_coefs(b0, s0, a0)
-                    k1, h1 = get_coefs(b2, s2, a3)
-                    prev_b1 = self.segments[i].b1
-                    if prev_b1 is not None:
-                        b1 = -1 * prev_b1
-                    else:
-                        ve = self.calculate_ve(i, neighbour_quad, neighbour_i)
-                        b1 = self.segments[i].calculate_b1(k0, k1, h0, h1, b0, b2, s0, s1, s2, a0, a3, ve)
-                    a1 = 1/3 * (2 * k0 * b1 + k1 * b0 + 2 * h0 * s1 + h1 * s0)
-                    a2 = 1/3 * (k0 * b2 + 2 * k1 * b1 + h0 * s2 + 2 * h1 * s1)
-        if i == 0:
-            self.kk[1][1] = a1 + p1
-            self.kk[1][2] = a2 + p2
-        elif i == 1:
-            self.kk1[0][1] = a1 + p1
-            self.kk1[1][1] = a2 + p2
-        elif i == 2:
-            self.kk[2][1] = a1 + p1
-            self.kk[2][2] = a2 + p2
-        elif i == 3:
-            self.kk1[0][0] = a1 + p1
-            self.kk1[1][0] = a2 + p2
-        return True
-
-    @staticmethod
-    def calculate_free_coefs(a0: mathutils.Vector, a3: mathutils.Vector):
-        a1 = a0*2/3 + a3*1/3
-        a2 = a0*1/3 + a3*2/3
-        return a1, a2
-    
-    def extract_corner(self, i: int):
-        if i == 0:
-            return self.segments[0].p1.i
-        if i == 1:
-            return self.segments[0].p2.i
-        if self.directions[2]:
-            if i == 2:
-                return self.segments[2].p2.i
-            if i == 3:
-                return self.segments[2].p1.i
-        else:
-            if i == 2:
-                return self.segments[2].p1.i
-            if i == 3:
-                return self.segments[2].p2.i
-    
-    def render_quad(self, d: "DependantsOfResolution_np | DependantsOfResolution", glist: "GlobalList"):
-        self.calculate_coefs()
-        for i in range(4):
-            self.calculate_coefs_along_segment(i)
-        borders = [self.segments[i].verts for i in range(4)]
-        for i in range(4):
-            if not self.directions[i]:
-                border = borders[i]
-                assert isinstance(border, list)
-                borders[i] = list(reversed(border))
-        corners = [self.extract_corner(i) for i in range(4)]
-        calc_gregory_surf(self.kk, self.kk1, d, *borders, *corners, glist)
-
-    def calculate_ve(self, i: int, neighbour: "Quad", neighbour_i: int) -> mathutils.Vector:
-        p1 = self.segments[(i+2) % 4].calculate_midpoint()
-        p2 = neighbour.segments[(neighbour_i+2) % 4].calculate_midpoint()
-        ve = p2 - p1
-        return ve
-
 class GlobalList:
     def __init__(self):
         self.reduced_points: List[mathutils.Vector] = []
         self.big_points: List[BigPoint] = []
         self.count = 0
         self.splines: List[Spline] = []
-        self.quads: List[Quad] = []
-        self.big_quads: List[BigQuad] = []
         self.segments: List[Segment] = []
         self.verts: Optional[List[mathutils.Vector] | npt.NDArray[np.float64]] = None
         self.faces: Optional[List[List[int]] | npt.NDArray[np.int64]] = None
@@ -1920,131 +1086,6 @@ class GlobalList:
 
     def add_segment(self, segment: Segment):
         self.segments.append(segment)
-
-    def add_quad(self, quad: Quad):
-        self.quads.append(quad)
-
-    def add_big_quad(self, big_quad: BigQuad):
-        self.big_quads.append(big_quad)
-
-    def work_with_segment(self, segment: Segment):
-        segments_verified = [segment]
-        bpoints_verified: List[BigPoint] = []
-        counter_splines = 1
-        prev_spline = segment.p1.spline
-        initial_spline = prev_spline
-        initial_bpoint = segment.p1.bpoint
-        self.edge_step(initial_bpoint, segment.p2, segments_verified, bpoints_verified, counter_splines, prev_spline, initial_spline, True)
-        segment.finished = True
-
-    def edge_step(self,
-                  initial_bpoint: BigPoint,
-                  point: Point,
-                  segments_verified: List[Segment],
-                  bpoints_verified: List[BigPoint],
-                  counter_splines: int,
-                  prev_spline: Spline,
-                  initial_spline: Spline,
-                  first: bool) -> StepRes:
-        bpoint = point.bpoint
-        spline = point.spline
-        if spline != prev_spline:
-            counter_splines += 1
-            first = False
-            if counter_splines > 5:
-                return StepRes.NOT_FINISHED
-            if counter_splines == 5 and spline != initial_spline:
-                return StepRes.NOT_FINISHED
-        if initial_bpoint == bpoint:
-            if counter_splines < 4:
-                return StepRes.NOT_FINISHED
-            if Quad.verify_and_init(segments_verified, self):
-                if segments_verified[0].finished:
-                    return StepRes.FINISHED
-                return StepRes.PART_FINISHED
-        if bpoint in bpoints_verified:
-            return StepRes.NOT_FINISHED
-        bpoints_verified.append(bpoint)
-        for point in bpoint.points:
-            segment1 = point.prev_seg
-            res = self.step_segment(initial_bpoint,
-                                    segment1,
-                                    True,
-                                    segments_verified,
-                                    bpoints_verified,
-                                    counter_splines,
-                                    spline,
-                                    initial_spline,
-                                    first)
-            if res in (StepRes.FINISHED, StepRes.PART_FINISHED):
-                bpoints_verified.pop()
-                return res
-            segment2 = point.post_seg
-            res = self.step_segment(initial_bpoint,
-                                    segment2,
-                                    False,
-                                    segments_verified,
-                                    bpoints_verified,
-                                    counter_splines,
-                                    spline,
-                                    initial_spline,
-                                    first)
-            if res in (StepRes.FINISHED, StepRes.PART_FINISHED):
-                bpoints_verified.pop()
-                return res
-        bpoints_verified.pop()
-        return StepRes.NOT_FINISHED
-
-    def step_segment(self,
-                     initial_bpoint: BigPoint,
-                     segment: Optional[Segment],
-                     is_p1: bool,
-                     sv: List[Segment],
-                     bv: List[BigPoint],
-                     counter_splines: int,
-                     spline: Spline,
-                     initial_spline: Spline,
-                     first: bool) -> StepRes:
-        if segment is not None:
-            if not segment in sv:
-                if not segment.finished:
-                    sv.append(segment)
-                    point = segment.p1 if is_p1 else segment.p2
-                    res = self.edge_step(initial_bpoint, point, sv, bv, counter_splines, spline, initial_spline, first)
-                    sv.pop()
-                    match res:
-                        case StepRes.FINISHED: 
-                            return StepRes.FINISHED
-                        case StepRes.PART_FINISHED:
-                            if not first:
-                                return StepRes.PART_FINISHED
-                        case StepRes.NOT_FINISHED:
-                            return StepRes.NOT_FINISHED
-        return StepRes.NOT_FINISHED
-
-    def add_quads(self):
-        for segment in self.segments:
-            if not segment.finished:
-                self.work_with_segment(segment)
-
-    def subdivide_quads(self, obj: bpy.types.ID):
-        for bq in self.big_quads:
-            bq.subdivide(obj, self)
-
-    def render_mesh(self, d: "DependantsOfResolution|DependantsOfResolution_np", name: str, context: bpy.types.Context):
-        for bpoint in self.big_points:
-            bpoint.add_vert(self)
-        for segment in self.segments:
-            segment.calculate_verts(self, d)
-        for quad in self.quads:
-            quad.render_quad(d, self)
-        if self.verts is not None and self.faces is not None:
-            mesh = bpy.data.meshes.new(name=name + "_Mesh")
-            mesh.from_pydata(self.verts, [], self.faces)
-            obj = bpy.data.objects.new(name + "_GeneratedMesh", mesh)
-            context.collection.objects.link(obj)
-            return obj
-        return None
 
     def add_many_curves(self, name: str, parent_collection: bpy.types.Collection, context: bpy.types.Context):
         collection = bpy.data.collections.new(name)
@@ -2124,16 +1165,20 @@ def add_empty_obj(collection, co):
     return empty_obj
 
 def add_curve_obj(collection, co_s, handles_left, handles_right):
-    curve = bpy.data.curves.new(name="greg_curve", type="CURVE")
-    curve.dimensions = "3D"
+    curve = bpy.data.curves.new(name="greg_curve", type='CURVE')
+    curve.dimensions = '3D'
     spline = curve.splines.new("BEZIER")
     spline.bezier_points.add(1)
     for i, (co, handle_left, handle_right) in enumerate(zip(co_s, handles_left, handles_right)):
         spline.bezier_points[i].co = co
         spline.bezier_points[i].handle_left = co + handle_left
         spline.bezier_points[i].handle_right = co + handle_right
-        spline.bezier_points[i].handle_left_type = "ALIGNED"
-        spline.bezier_points[i].handle_right_type = "ALIGNED"
+        if are_collinear(handle_left, handle_right) and handle_left.dot(handle_right) < 0:
+            spline.bezier_points[i].handle_left_type = 'ALIGNED'
+            spline.bezier_points[i].handle_right_type = 'ALIGNED'
+        else:
+            spline.bezier_points[i].handle_left_type = 'FREE'
+            spline.bezier_points[i].handle_right_type = 'FREE'
     curve_obj = bpy.data.objects.new(name="greg_curve_obj", object_data=curve)
     curve_obj.greg_curve_settings.used_for_greg = True
     curve_obj.greg_curve_settings.name = get_next_id(collection)
@@ -2438,11 +1483,6 @@ def remove_curve_from_greg_structure(curve_obj: bpy.types.Object, collection: Op
     #print_structure(collection)
     #print("****************************")
 
-def copy_transforms(active: bpy.types.Object, new: bpy.types.Object):
-    new.rotation_euler = active.rotation_euler
-    new.location = active.location
-    new.scale = active.scale
-
 #**************************************************************************
 def mirror_vec_with_vec(vec, normal, pos):
     reflected = vec.reflect(normal)
@@ -2461,7 +1501,7 @@ def mirror_vec(vec, mirror_object, axis): #axis: 0 - x, 1 - y, 2 - z
         return vec.reflect(basic_vec)
 
 #**************************************************************************
-
+logging = [False, False]
 class NewGlobalList:
     def __init__(self, collection):
         self.collection = collection
@@ -2472,11 +1512,18 @@ class NewGlobalList:
 
     def add_quads(self):
         for phantom_curve in self.collection.greg_settings.phantom_curves:
+            logging[0] = (phantom_curve.source_curve.name == "greg_curve_obj.002")
+            logging[1] = logging[0]
             if not phantom_curve.finished:
+                if logging[0]:
+                    print("here 0")
                 self.work_with_curve(phantom_curve)
 
     def work_with_curve(self, phantom_curve):
         curves_verified = [phantom_curve]
+        if logging[0]:
+            print([qq.source_curve.name for qq in curves_verified])
+
         bpoints_verified = []
         initial_bpoint = self.collection.greg_settings.phantom_bpoints[phantom_curve.bpoint1_name]
         bpoint = self.collection.greg_settings.phantom_bpoints[phantom_curve.bpoint2_name]
@@ -2496,10 +1543,13 @@ class NewGlobalList:
                   bpoints_verified,
                   end0,
                   first: bool) -> StepRes:
-        first = False
-        if len(curves_verified) > 4:
+        if len(curves_verified) > 4 or (len(curves_verified) == 4 and initial_bpoint != bpoint):
+            if logging[1]:
+                print("here 1")
             return StepRes.NOT_FINISHED
-        if initial_bpoint.name == bpoint.name:
+        if initial_bpoint == bpoint:
+            if logging[1]:
+                print("here 2")
             if len(curves_verified) < 4:
                 return StepRes.NOT_FINISHED
             if self.verify_and_init_quad(curves_verified, end0):
@@ -2508,10 +1558,14 @@ class NewGlobalList:
                 return StepRes.PART_FINISHED
             return StepRes.NOT_FINISHED
         if bpoint in bpoints_verified:
+            if logging[1]:
+                print("here 3")
             return StepRes.NOT_FINISHED
         bpoints_verified.append(bpoint)
         for end in bpoint.ends:
             phantom_curve1 = self.collection.greg_settings.phantom_curves[end.curve_name]
+            if logging[1]:
+                print("here", phantom_curve1.source_curve.name)
             if not self.are_collinear(end0, end): # they are not collinear
                 res = self.step_curve(initial_bpoint,
                                     phantom_curve1,
@@ -2520,8 +1574,14 @@ class NewGlobalList:
                                     bpoints_verified,
                                     first)
                 if res in (StepRes.FINISHED, StepRes.PART_FINISHED):
+                    if logging[1]:
+                        print("here 4")
                     bpoints_verified.pop()
                     return res
+            else:
+                if logging[1]:
+                    print("here 5")
+
         bpoints_verified.pop()
         return StepRes.NOT_FINISHED
     
@@ -2533,6 +1593,8 @@ class NewGlobalList:
     
     def are_collinear(self, end1, end2):
         v1, v2 = [self.extract_handle_phantom(end) for end in (end1, end2)]
+        if logging[1]:
+            print(v1, v2)
         return are_collinear(v1, v2)
         
 
@@ -2543,9 +1605,18 @@ class NewGlobalList:
                    curves_verified,
                    bpoints_verified,
                    first) -> StepRes:
+        if phantom_curve in curves_verified:
+            if logging[1]:
+                print("here 6")
         if not phantom_curve in curves_verified:
+            if phantom_curve.finished:
+                if logging[1]:
+                    print("here 7")
             if not phantom_curve.finished:
                 curves_verified.append(phantom_curve)
+                if logging[0]:
+                    print([qq.source_curve.name for qq in curves_verified])
+                    #logging[1] = (phantom_curve.source_curve.name == 'greg_curve_obj.012')
                 if end_i == 0:
                     bpoint = self.collection.greg_settings.phantom_bpoints[phantom_curve.bpoint2_name]
                     end0 = bpoint.ends[phantom_curve.end2_name]
@@ -2557,8 +1628,12 @@ class NewGlobalList:
                                      curves_verified,
                                      bpoints_verified,
                                      end0,
-                                     first)
+                                     False)
                 curves_verified.pop()
+                logging[1] = False
+                if logging[0]:
+                    print([qq.source_curve.name for qq in curves_verified])
+
                 match res:
                     case StepRes.FINISHED: 
                         return StepRes.FINISHED
@@ -2604,6 +1679,9 @@ class NewGlobalList:
                     quad.dirs[2] = (phantom_curve.bpoint2_name == curves_verified[1].bpoint1_name)
             elif i == 3:
                 quad.dirs[3] = (phantom_curve.bpoint1_name == curves_verified[0].bpoint1_name)
+        if logging[0]:
+            print("quad!")
+        return True
 
     @staticmethod
     def calculate_midpoint(curve_obj):
@@ -2652,40 +1730,6 @@ class NewGlobalList:
         res = [other_quad for other_quad in phantom_curve.quads if quad.name != other_quad.name][0]
         res_quad = self.collection.greg_settings.quads[res.name]
         return res_quad
-    
-    '''@staticmethod
-    def extract_first_handle(quad, i: int):
-        if quad.dirs[i]:
-            point = quad.curves[i].curve.data.splines[0].bezier_points[0]
-            return point.handle_right - point.co
-        point = quad.curves[i].curve.data.splines[0].bezier_points[1]
-        return point.handle_left - point.co
-
-    @staticmethod
-    def extract_last_handle(quad, i: int):
-        if quad.dirs[i]:
-            point = quad.curves[i].curve.data.splines[0].bezier_points[1]
-            return point.handle_left - point.co
-        point = quad.curves[i].curve.data.splines[0].bezier_points[0]
-        return point.handle_right - point.co'''
-
-    '''@staticmethod
-    def extract_a0_a3(quad, i: int):
-        if i == 0:
-            a0 = NewGlobalList.extract_first_handle(quad, 3)
-            a3 = NewGlobalList.extract_first_handle(quad, 1)
-        elif i == 1:
-            a0 = NewGlobalList.extract_last_handle(quad, 0)
-            a3 = NewGlobalList.extract_last_handle(quad, 2)
-        elif i == 2:
-            a0 = NewGlobalList.extract_last_handle(quad, 3)
-            a3 = NewGlobalList.extract_last_handle(quad, 1)
-        elif i == 3:
-            a0 = NewGlobalList.extract_first_handle(quad, 0)
-            a3 = NewGlobalList.extract_first_handle(quad, 2)
-        else:
-            raise ValueError("wrong i")
-        return a0, a3'''
     
     @staticmethod
     def extract_a0_a3(quad, i: int):
@@ -2769,7 +1813,10 @@ class NewGlobalList:
                         
                         if (next_curve_no > other_curve_no) or\
                            (next_curve_no == other_curve_no and quad_i == 1):
-                            phantom_curve.invert_shear[quad_i] = True
+                            try:
+                                phantom_curve.invert_shear[quad_i] = True
+                            except IndexError:
+                                print("quad_i", quad_i)
                         if phantom_curve.source_curve.greg_is_sharp:
                             a1, a2 = NewGlobalList.calculate_free_coefs(a0, a3, quad_i, phantom_curve, self.collection)
                         else:
@@ -3694,15 +2741,26 @@ def add_bridge_mirror_func(self, context: bpy.types.Context):
 
 class GlobalForSubdivide:
     def __init__(self):
-        self.curves = {}
-        self.points = {}
+        self.curves: Dict[str, CurveForSubdivide] = {}
+        self.points: Dict[int, PointForSubdivide] = {}
         self.max_id = 0
-        self.borders = {}
+        self.borders: Dict[int, Dict[int, Tuple[int, List["CurveForSubdivide"]]]] = {}
         self.v_grid = None
-        self.points_grid = []
+        self.points_grid: List[List["MiddlePoint"]] = []
         self.edge_points = []
-        self.corner_handles = []
+        self.corner_handles: List[Tuple[mathutils.Vector, mathutils.Vector]] = []
+        self.outer_corner_handles: List[Tuple[mathutils.Vector, mathutils.Vector]] = []
         self.real_curves = []
+        self.border0: List[CurveForSubdivide] = []
+        self.border1: List[CurveForSubdivide] = []
+        self.border2: List[CurveForSubdivide] = []
+        self.border3: List[CurveForSubdivide] = []
+        self.vertical: Optional[Tuple[Optional[bpy.types.Object], int]] = None
+        self.horizontal: Optional[Tuple[Optional[bpy.types.Object], int]] = None
+        self.diagonal1: Optional[Tuple[Optional[bpy.types.Object], int]] = None
+        self.diagonal2: Optional[Tuple[Optional[bpy.types.Object], int]] = None
+        self.xtot: int
+        self.ytot: int
     
     def add_point_if_needed(self, empty_obj, co):
         for point in self.points.values():
@@ -3749,11 +2807,41 @@ class GlobalForSubdivide:
                             new_curves.append(self.add_curve(empties, new_cos, True, curve_obj, new_mirror_sequence))
                         curves.extend(new_curves)
 
+    def find_borders_step(self,
+                          curves_sequence: List["CurveForSubdivide"], 
+                          prev_point: "PointForSubdivide", 
+                          next_curve: "CurveForSubdivide", 
+                          point: "PointForSubdivide",
+                          number: int,
+                          all_corresponding_points: List["PointForSubdivide"]):
+        next_point = [p for p in next_curve.points if p != prev_point][0]
+        if next_point in all_corresponding_points:
+            if next_point == point:
+                print(1)
+                return False
+            other_number = next_point.number
+            self.borders[number][other_number] = (len(curves_sequence), curves_sequence.copy())
+            if other_number not in self.borders:
+                self.borders[other_number] = {}
+            self.borders[other_number][number] = (len(curves_sequence), list(reversed(curves_sequence)))
+            return True
+        else:
+            prev_point = next_point
+            next_curves = [c[0] for c in next_point.curves.values() if c[0] not in curves_sequence]
+            for next_curve  in next_curves:
+                curves_sequence.append(next_curve)
+                if not self.find_borders_step(curves_sequence, prev_point, next_curve, point, number, all_corresponding_points):
+                    return False #error!
+                curves_sequence.pop()
+            return True
+
+    
     def find_borders(self, empties):
-        all_corresponding_points = []
+        all_corresponding_points: List["PointForSubdivide"] = []
         for empty in empties:
             corresponding_points = [point for point in self.points.values() if point.empty == empty]
             if len(corresponding_points) == 0:
+                print(0)
                 return False
             all_corresponding_points.extend(corresponding_points)
         for point in all_corresponding_points:
@@ -3766,28 +2854,13 @@ class GlobalForSubdivide:
                     prev_point = point
                     next_curve = curve
                     curves_sequence = [next_curve]
-                    stop = False
-                    while not stop:
-                        next_point = [p for p in next_curve.points if p != prev_point][0]
-                        if next_point in all_corresponding_points:
-                            if next_point == point:
-                                return False
-                            stop = True
-                        else:
-                            if len(next_point.curves) != 2:
-                                return False
-                            next_curve = [c[0] for c in next_point.curves.values() if c[0] != next_curve][0]
-                            prev_point = next_point
-                            curves_sequence.append(next_curve)
-                    other_number = next_point.number
-                    self.borders[number][other_number] = (len(curves_sequence), curves_sequence)
-                    if other_number not in self.borders:
-                        self.borders[other_number] = {}
-                    self.borders[other_number][number] = (len(curves_sequence), list(reversed(curves_sequence)))
+                    if not self.find_borders_step(curves_sequence, prev_point, next_curve, point, number, all_corresponding_points):
+                        return False #error!
         quads = {}
         for point in self.borders.keys():
             stack = [point]
             if GlobalForSubdivide.step(quads, stack, self.borders) == False:
+                print(3)
                 return False
         not_mirrored_max = 0
         optimal_quad = None
@@ -3797,8 +2870,10 @@ class GlobalForSubdivide:
                 not_mirrored_max = not_mirrored
                 optimal_quad = quad
         if optimal_quad is None:
+            print(4)
             return False
         if not_mirrored_max != len([curve for curve in self.curves.values() if not curve.is_mirrored]):
+            print(5)
             return False
         return optimal_quad
 
@@ -3848,13 +2923,13 @@ class GlobalForSubdivide:
         return True
 
     @staticmethod
-    def make_key(i1, i2):
+    def make_key(i1: int, i2: int):
         i_s = [i1, i2]
         i_s.sort()
         return f"{i_s[0]}_{i_s[1]}"
     
     @staticmethod
-    def get_next_point(point, curve):
+    def get_next_point(point: "PointForSubdivide", curve: "CurveForSubdivide"):
         return [p for p in curve.points if p != point][0]
 
     def extract_quad_points(self, quad):
@@ -3876,7 +2951,7 @@ class GlobalForSubdivide:
         return vec
     
     @staticmethod
-    def get_handle_other(point, curve_prev, curve_post):
+    def get_handle_other_and_outer(point, curve_prev, curve_post):
         prev_other_i = None
         post_other_i = None
         bridge_mirror_vec_prev = None
@@ -3904,32 +2979,36 @@ class GlobalForSubdivide:
                   for end in original_empty.greg_empty_settings.curve_ends\
                   if end.basic_end.curve not in (curve_prev.original_curve, curve_post.original_curve)]
         if not curves:
-            return None
+            return [None, None]
         points = [(curve.data.splines[0].bezier_points[i], i) for curve, i in curves]
         handles = [point.handle_left if i == 0 else point.handle_right for point, i in points]
-        mirrored_handles_prev = [GlobalForSubdivide.mirror_with_sequence(handle, curve_prev.mirror_sequence) for handle in handles]
-        if bridge_mirror_vec_prev is not None:
-            mirrored_handles_prev = [mirror_vec_with_vec(h, bridge_mirror_vec_prev, bridge_mirror_pos_prev)
-                                     for h in mirrored_handles_prev]
-        mirrored_handles_post = [GlobalForSubdivide.mirror_with_sequence(handle, curve_post.mirror_sequence) for handle in handles]
-        if bridge_mirror_vec_post is not None:
-            mirrored_handles_post = [mirror_vec_with_vec(h, bridge_mirror_vec_post, bridge_mirror_pos_post)
-                                     for h in mirrored_handles_post]
-        mirrored_handles = mirrored_handles_post.copy()
-        for handle1 in mirrored_handles_prev:
-            add = True
-            for handle2 in mirrored_handles_post:
-                if same_coords(handle1, handle2):
-                    add = False
-                    break
-            if add:
-                mirrored_handles.append(handle1)
-        total = mirrored_handles[0]
-        for el in mirrored_handles[1:]:
-            total += el
-        mean_handle = total / len(mirrored_handles)
-        return mean_handle - point.co
-    
+        alternative_handles = [point.handle_left if i == 1 else point.handle_right for point, i in points]
+        res = []
+        for hh in handles, alternative_handles:
+            mirrored_handles_prev = [GlobalForSubdivide.mirror_with_sequence(handle, curve_prev.mirror_sequence) for handle in hh]
+            if bridge_mirror_vec_prev is not None:
+                mirrored_handles_prev = [mirror_vec_with_vec(h, bridge_mirror_vec_prev, bridge_mirror_pos_prev)
+                                        for h in mirrored_handles_prev]
+            mirrored_handles_post = [GlobalForSubdivide.mirror_with_sequence(handle, curve_post.mirror_sequence) for handle in hh]
+            if bridge_mirror_vec_post is not None:
+                mirrored_handles_post = [mirror_vec_with_vec(h, bridge_mirror_vec_post, bridge_mirror_pos_post)
+                                        for h in mirrored_handles_post]
+            mirrored_handles = mirrored_handles_post.copy()
+            for handle1 in mirrored_handles_prev:
+                add = True
+                for handle2 in mirrored_handles_post:
+                    if same_coords(handle1, handle2):
+                        add = False
+                        break
+                if add:
+                    mirrored_handles.append(handle1)
+            total = mirrored_handles[0]
+            for el in mirrored_handles[1:]:
+                total += el
+            mean_handle = total / len(mirrored_handles)
+            res.append(mean_handle - point.co)
+        return res
+
     @staticmethod
     def get_handles_left_right(point, curve_prev, curve_post):
         if curve_prev.points[0] == point:
@@ -3945,8 +3024,24 @@ class GlobalForSubdivide:
         handle_right_point = GlobalForSubdivide.mirror_with_sequence(handle_right_point_init, curve_post.mirror_sequence)
         handle_right = handle_right_point - point.co
         return handle_left, handle_right
+
+    @staticmethod
+    def get_outer_handles_left_right(point, curve_prev, curve_post):
+        if curve_prev.points[0] == point:
+            handle_right_point_init = curve_prev.original_curve.data.splines[0].bezier_points[0].handle_left
+        elif curve_prev.points[1] == point:
+            handle_right_point_init = curve_prev.original_curve.data.splines[0].bezier_points[1].handle_right
+        handle_right_point = GlobalForSubdivide.mirror_with_sequence(handle_right_point_init, curve_prev.mirror_sequence)
+        handle_right = handle_right_point - point.co
+        if curve_post.points[0] == point:
+            handle_left_point_init = curve_post.original_curve.data.splines[0].bezier_points[0].handle_left
+        elif curve_post.points[1] == point:
+            handle_left_point_init = curve_post.original_curve.data.splines[0].bezier_points[1].handle_right
+        handle_left_point = GlobalForSubdivide.mirror_with_sequence(handle_left_point_init, curve_post.mirror_sequence)
+        handle_left = handle_left_point - point.co
+        return handle_left, handle_right
     
-    def fill_handles(self, quad):
+    def fill_handles(self, quad: List[int]):
         for i in range(4):
             p0_number = quad[i]
             p1_number = quad[(i+1)%4]
@@ -3958,7 +3053,7 @@ class GlobalForSubdivide:
                 curve_prev = curves[j]
                 curve_post = curves[j+1]
                 point.handle_left, point.handle_right = GlobalForSubdivide.get_handles_left_right(point, curve_prev, curve_post)
-                point.handle_other = GlobalForSubdivide.get_handle_other(point, curve_prev, curve_post)
+                point.handle_other, point.handle_outer = GlobalForSubdivide.get_handle_other_and_outer(point, curve_prev, curve_post)
 
     @staticmethod
     def populate_handles(handles):
@@ -3966,7 +3061,6 @@ class GlobalForSubdivide:
         count = 1
         while i < (len(handles) - 1):
             p1 = handles[i]
-            assert isinstance(p1, mathutils.Vector)
             count = 1
             p2 = handles[i + count]
             while p2 is None:
@@ -3981,33 +3075,44 @@ class GlobalForSubdivide:
     def extract_coords(self, i):
         return [p.co for p in self.edge_points[i]]
     
-    def extract_xtot_ytot(self, quad):
-        self.xtot = self.borders[quad[0]][quad[1]][0] + 1
-        self.ytot = self.borders[quad[1]][quad[2]][0] + 1
+    def extract_xtot_ytot(self):
+        self.xtot = self.borders[self.optimal_quad[0]][self.optimal_quad[1]][0] + 1
+        self.ytot = self.borders[self.optimal_quad[1]][self.optimal_quad[2]][0] + 1
     
-    def extract_corner_handles(self, quad):
-        p30, p01, p12, p23 = [self.points[q] for q in quad]
-        border0 = self.borders[quad[0]][quad[1]][1]
-        border1 = self.borders[quad[1]][quad[2]][1]
-        border2 = self.borders[quad[3]][quad[2]][1]
-        border3 = self.borders[quad[0]][quad[3]][1]
-        handle_left_1, handle_right_0 = GlobalForSubdivide.get_handles_left_right(p01, border0[-1], border1[0])
-        handle_right_2, handle_right_1 = GlobalForSubdivide.get_handles_left_right(p12, border1[-1], border2[-1])
-        handle_left_2, handle_right_3 = GlobalForSubdivide.get_handles_left_right(p23, border3[-1], border2[0])
-        handle_left_0, handle_left_3 = GlobalForSubdivide.get_handles_left_right(p30, border3[0], border0[0])
+    def extract_corner_handles(self):
+        p30, p01, p12, p23 = [self.points[q] for q in self.optimal_quad]
+        handle_left_1, handle_right_0 = GlobalForSubdivide.get_handles_left_right(p01, self.border0[-1], self.border1[0])
+        handle_right_2, handle_right_1 = GlobalForSubdivide.get_handles_left_right(p12, self.border1[-1], self.border2[-1])
+        handle_left_2, handle_right_3 = GlobalForSubdivide.get_handles_left_right(p23, self.border3[-1], self.border2[0])
+        handle_left_0, handle_left_3 = GlobalForSubdivide.get_handles_left_right(p30, self.border3[0], self.border0[0])
+        outer_handle_right_0, outer_handle_left_1 = GlobalForSubdivide.get_outer_handles_left_right(p01, self.border0[-1], self.border1[0])
+        outer_handle_right_1, outer_handle_right_2 = GlobalForSubdivide.get_outer_handles_left_right(p12, self.border1[-1], self.border2[-1])
+        outer_handle_right_3, outer_handle_left_2 = GlobalForSubdivide.get_outer_handles_left_right(p23, self.border3[-1], self.border2[0])
+        outer_handle_left_3, outer_handle_left_0 = GlobalForSubdivide.get_outer_handles_left_right(p30, self.border3[0], self.border0[0])
         self.corner_handles.append((handle_left_0, handle_right_0))
         self.corner_handles.append((handle_left_1, handle_right_1))
         self.corner_handles.append((handle_left_2, handle_right_2))
         self.corner_handles.append((handle_left_3, handle_right_3))
+        self.outer_corner_handles.append((outer_handle_left_0, outer_handle_right_0))
+        self.outer_corner_handles.append((outer_handle_left_1, outer_handle_right_1))
+        self.outer_corner_handles.append((outer_handle_left_2, outer_handle_right_2))
+        self.outer_corner_handles.append((outer_handle_left_3, outer_handle_right_3))
     
-    def extract_handles(self, i: int):
+    def extract_handles(self, i: int, outer=False):
         handles_len = self.xtot if i in (0, 2) else self.ytot
         handles = [None] * handles_len
-        handles[0] = self.corner_handles[i][0]
-        handles[-1] = self.corner_handles[i][1]
+        if outer:
+            handles[0] = self.outer_corner_handles[i][0]
+            handles[-1] = self.outer_corner_handles[i][1]
+        else:
+            handles[0] = self.corner_handles[i][0]
+            handles[-1] = self.corner_handles[i][1]
         for j in range(1, handles_len - 1):
             point = self.edge_points[i][j]
-            handles[j] = point.handle_other
+            if outer:
+                handles[j] = point.handle_outer
+            else:
+                handles[j] = point.handle_other
         return handles
     
     def get_handles_right_left(self, i, right):
@@ -4110,31 +3215,27 @@ class GlobalForSubdivide:
         return None
     
     def symmetrize(self):
+        self.border0 = self.borders[self.optimal_quad[0]][self.optimal_quad[1]][1]
+        self.border1 = self.borders[self.optimal_quad[1]][self.optimal_quad[2]][1]
+        self.border2 = self.borders[self.optimal_quad[3]][self.optimal_quad[2]][1]
+        self.border3 = self.borders[self.optimal_quad[0]][self.optimal_quad[3]][1]
         if self.xtot > 2 and self.ytot > 2:
-            border0 = self.borders[self.optimal_quad[0]][self.optimal_quad[1]][1]
-            border1 = self.borders[self.optimal_quad[1]][self.optimal_quad[2]][1]
-            border2 = self.borders[self.optimal_quad[3]][self.optimal_quad[2]][1]
-            border3 = self.borders[self.optimal_quad[0]][self.optimal_quad[3]][1]
-            object_for_mirror = border0[0].original_curve
-            vertical = None
-            horizontal = None
-            diagonal1 = None
-            diagonal2 = None
+            object_for_mirror = self.border0[0].original_curve
             if self.xtot == self.ytot:
-                diagonal1 = GlobalForSubdivide.verify_is_mirror(object_for_mirror, border0[0], border3[0])
-                diagonal2 = GlobalForSubdivide.verify_is_mirror(object_for_mirror, border0[-1], border1[0])
-            horizontal = GlobalForSubdivide.verify_is_mirror(object_for_mirror, border0[0], border2[0])
-            vertical = GlobalForSubdivide.verify_is_mirror(object_for_mirror, border1[0], border3[0])
-            if diagonal1:
+                self.diagonal1 = GlobalForSubdivide.verify_is_mirror(object_for_mirror, self.border0[0], self.border3[0])
+                self.diagonal2 = GlobalForSubdivide.verify_is_mirror(object_for_mirror, self.border0[-1], self.border1[0])
+            self.horizontal = GlobalForSubdivide.verify_is_mirror(object_for_mirror, self.border0[0], self.border2[0])
+            self.vertical = GlobalForSubdivide.verify_is_mirror(object_for_mirror, self.border1[0], self.border3[0])
+            if self.diagonal1:
                 for x in range(1, self.xtot - 1):
                     point = self.points_grid[x][x]
-                    GlobalForSubdivide.add_point_to_symmetrize(point, *diagonal1)
-            if diagonal2:
+                    GlobalForSubdivide.add_point_to_symmetrize(point, *self.diagonal1)
+            if self.diagonal2:
                 for x in range(1, self.xtot - 1):
                     y = self.xtot - x - 1
                     point = self.points_grid[y][x]
-                    GlobalForSubdivide.add_point_to_symmetrize(point, *diagonal2)
-            if horizontal and vertical and (not diagonal1) and (not diagonal2) and self.xtot % 2 == 0 and self.ytot % 2 == 0:
+                    GlobalForSubdivide.add_point_to_symmetrize(point, *self.diagonal2)
+            if self.horizontal and self.vertical and (not self.diagonal1) and (not self.diagonal2) and self.xtot % 2 == 0 and self.ytot % 2 == 0:
                 x2 = self.xtot // 2
                 x1 = x2 - 1
                 y2 = self.ytot // 2
@@ -4143,38 +3244,38 @@ class GlobalForSubdivide:
                 p2 = self.points_grid[y1][x2]
                 p3 = self.points_grid[y2][x1]
                 p4 = self.points_grid[y2][x2]
-                p1.other_points_and_mirrors.add((p4, horizontal, vertical))
-                p2.other_points_and_mirrors.add((p3, horizontal, vertical))
-                p3.other_points_and_mirrors.add((p2, horizontal, vertical))
-                p4.other_points_and_mirrors.add((p1, horizontal, vertical))
-            if horizontal:
+                p1.other_points_and_mirrors.add((p4, self.horizontal, self.vertical))
+                p2.other_points_and_mirrors.add((p3, self.horizontal, self.vertical))
+                p3.other_points_and_mirrors.add((p2, self.horizontal, self.vertical))
+                p4.other_points_and_mirrors.add((p1, self.horizontal, self.vertical))
+            if self.horizontal:
                 if self.ytot % 2 == 1:
                     middle_y = self.ytot // 2
                     for x in range(1, self.xtot - 1):
                         point = self.points_grid[middle_y][x]
-                        GlobalForSubdivide.add_point_to_symmetrize(point, *horizontal)
+                        GlobalForSubdivide.add_point_to_symmetrize(point, *self.horizontal)
                 else:
                     y2 = self.ytot // 2
                     y1 = y2 - 1
                     for x in range(1, self.xtot - 1):
                         point1 = self.points_grid[y1][x]
                         point2 = self.points_grid[y2][x]
-                        point1.other_points_and_mirrors.add((point2, horizontal))
-                        point2.other_points_and_mirrors.add((point1, horizontal))
-            if vertical:
+                        point1.other_points_and_mirrors.add((point2, self.horizontal))
+                        point2.other_points_and_mirrors.add((point1, self.horizontal))
+            if self.vertical:
                 if self.xtot % 2 == 1:
                     middle_x = self.xtot // 2
                     for y in range(1, self.ytot - 1):
                         point = self.points_grid[y][middle_x]
-                        GlobalForSubdivide.add_point_to_symmetrize(point, *vertical)
+                        GlobalForSubdivide.add_point_to_symmetrize(point, *self.vertical)
                 else:
                     x2 = self.xtot // 2
                     x1 = x2 - 1
                     for y in range(1, self.ytot - 1):
                         point1 = self.points_grid[y][x1]
                         point2 = self.points_grid[y][x2]
-                        point1.other_points_and_mirrors.add((point2, vertical))
-                        point2.other_points_and_mirrors.add((point1, vertical))
+                        point1.other_points_and_mirrors.add((point2, self.vertical))
+                        point2.other_points_and_mirrors.add((point1, self.vertical))
         for row in self.points_grid:
             for point in row:
                 point.total_from_mirrored()
@@ -4198,7 +3299,7 @@ class GlobalForSubdivide:
     
     def subdivide(self, optimal_quad):
         self.optimal_quad = optimal_quad
-        self.extract_xtot_ytot(optimal_quad)
+        self.extract_xtot_ytot()
         self.extract_quad_points(optimal_quad)
         v1 = self.extract_coords(0)
         v2 = self.extract_coords(2)
@@ -4211,9 +3312,10 @@ class GlobalForSubdivide:
                 row.append(MiddlePoint(self.v_grid[XY(j, i, self.xtot)]))
             self.points_grid.append(row)
         self.symmetrize()
-        self.extract_corner_handles(optimal_quad)
+        self.extract_corner_handles()
         self.fill_handles(optimal_quad)
         cross_hs = [GlobalForSubdivide.populate_handles(self.extract_handles(i)) for i in range(4)]
+        outer_hs = [GlobalForSubdivide.populate_handles(self.extract_handles(i, True)) for i in range(4)]
         cross_h1 = cross_hs[0]
         cross_h2 = cross_hs[2]
         cross_vh1 = cross_hs[3]
@@ -4257,14 +3359,75 @@ class GlobalForSubdivide:
                 self.points_grid[j][i].handle_up = collinear_up
         for i in range(self.xtot):
             self.points_grid[0][i].handle_down = cross_h1[i]
-            self.points_grid[0][i].handle_up = -cross_h1[i]
-            self.points_grid[self.ytot - 1][i].handle_down = -cross_h2[i]
+            self.points_grid[0][i].handle_up = outer_hs[0][i]
+            self.points_grid[self.ytot - 1][i].handle_down = outer_hs[2][i]
             self.points_grid[self.ytot - 1][i].handle_up = cross_h2[i]
         for i in range(self.ytot):
             self.points_grid[i][0].handle_right = cross_vh1[i]
-            self.points_grid[i][0].handle_left = -cross_vh1[i]
-            self.points_grid[i][self.xtot - 1].handle_right = -cross_vh2[i]
+            self.points_grid[i][0].handle_left = outer_hs[3][i]
+            self.points_grid[i][self.xtot - 1].handle_right = outer_hs[1][i]
             self.points_grid[i][self.xtot - 1].handle_left = cross_vh2[i]
+        self.adjust_midpoints_handles_mirrors()
+    
+    def adjust_midpoints_handles_mirrors(self):
+        if self.horizontal:
+            if self.ytot % 2 == 1:
+                mirror_object, axis = self.horizontal
+                normal = mathutils.Vector((0, 0, 0))
+                normal[axis] = 1
+                if mirror_object is not None:
+                    mat = mirror_object.matrix_world.copy()
+                    mat.invert()
+                    normal = normal @ mat
+                y_middle = self.ytot // 2
+                point0 = self.points_grid[y_middle][0]
+                point1 = self.points_grid[y_middle][-1]
+                point0.handle_right -= point0.handle_right.project(normal)
+                point0.handle_left -= point0.handle_left.project(normal)
+                point1.handle_right -= point1.handle_right.project(normal)
+                point1.handle_left -= point1.handle_left.project(normal)
+                for x in range(1, self.xtot - 1):
+                    point = self.points_grid[y_middle][x]
+                    point.handle_left -= point.handle_left.project(normal)
+                    point.handle_right -= point.handle_right.project(normal)
+                    point.handle_up = point.handle_up.project(normal)
+                    point.handle_down = point.handle_down.project(normal)
+        if self.vertical:
+            if self.xtot % 2 == 1:
+                mirror_object, axis = self.vertical
+                normal = mathutils.Vector((0, 0, 0))
+                normal[axis] = 1
+                if mirror_object is not None:
+                    mat = mirror_object.matrix_world.copy()
+                    mat.invert()
+                    normal = normal @ mat
+                x_middle = self.xtot // 2
+                point0 = self.points_grid[0][x_middle]
+                point1 = self.points_grid[-1][x_middle]
+                point0.handle_down -= point0.handle_down.project(normal)
+                point0.handle_up -= point0.handle_up.project(normal)
+                point1.handle_down -= point1.handle_down.project(normal)
+                point1.handle_up -= point1.handle_up.project(normal)
+                for y in range(1, self.ytot - 1):
+                    point = self.points_grid[y][x_middle]
+                    point.handle_left = point.handle_left.project(normal)
+                    point.handle_right = point.handle_right.project(normal)
+                    point.handle_up -= point.handle_up.project(normal)
+                    point.handle_down -= point.handle_down.project(normal)
+        if self.diagonal1:
+            for x in range(1, self.xtot - 1):
+                point = self.points_grid[x][x]
+                second = mirror_vec(-point.handle_up, *self.diagonal1)
+                point.handle_left = point.handle_left.project(second)
+                second = mirror_vec(-point.handle_down, *self.diagonal1)
+                point.handle_right = point.handle_right.project(second)
+        if self.diagonal2:
+            for x in range(1, self.xtot - 1):
+                point = self.points_grid[x][self.xtot - 1 - x]
+                second = mirror_vec(-point.handle_up, *self.diagonal2)
+                point.handle_right = point.handle_right.project(second)
+                second = mirror_vec(-point.handle_down, *self.diagonal2)
+                point.handle_left = point.handle_left.project(second)
   
     @staticmethod
     def verify_and_get_empty(curves, point):
@@ -4282,9 +3445,9 @@ class GlobalForSubdivide:
             raise ValueError("something wrong with selection")
         return empty
     
-    @staticmethod
-    def is_real_side_part(side, part, borders):
-        index = part * (-2) + 1
+    def is_real_side_part(self, side, part):
+        borders = (self.border0, self.border1, self.border2, self.border3)
+        index = -part
         return not borders[side][index].is_mirrored
     
     def generate_triangle(self, side, part): # only if xtot == ytot
@@ -4416,7 +3579,7 @@ class GlobalForSubdivide:
                 for x in range((self.xtot + 1) // 2, self.xtot - 1):
                     yield ((x, y), (x, y + 1))
 
-    def add_real_curve(self, xy1, xy2, border0, border1, border2, border3, empties_to_coplanar_collinear, collection, obj_for_mirror):
+    def add_real_curve(self, xy1, xy2, empties_to_coplanar_collinear, collection, obj_for_mirror):
         x1, y1 = xy1
         x2, y2 = xy2
         is_border1 = False
@@ -4426,22 +3589,22 @@ class GlobalForSubdivide:
         middle_point1 = self.points_grid[y1][x1]
         middle_point2 = self.points_grid[y2][x2]
         if x1 == 0:
-            curves_border = border3[y1 - 1], border3[y1]
+            curves_border = self.border3[y1 - 1], self.border3[y1]
             point = self.edge_points[3][y1]
             empty1 = GlobalForSubdivide.verify_and_get_empty(curves_border, point)
             is_border1 = True
         elif y1 == 0:
-            curves_border = border0[x1 - 1], border0[x1]
+            curves_border = self.border0[x1 - 1], self.border0[x1]
             point = self.edge_points[0][x1]
             empty1 = GlobalForSubdivide.verify_and_get_empty(curves_border, point)
             is_border1 = True
         if x2 == self.xtot - 1:
-            curves_border = border1[y1 - 1], border1[y1]
+            curves_border = self.border1[y1 - 1], self.border1[y1]
             point = self.edge_points[1][y1]
             empty2 = GlobalForSubdivide.verify_and_get_empty(curves_border, point)
             is_border2 = True
         elif y2 == self.ytot - 1:
-            curves_border = border2[x1 - 1], border2[x1]
+            curves_border = self.border2[x1 - 1], self.border2[x1]
             point = self.edge_points[2][x1]
             empty2 = GlobalForSubdivide.verify_and_get_empty(curves_border, point)
             is_border2 = True
@@ -4485,51 +3648,53 @@ class GlobalForSubdivide:
             if res:
                 i, axis = res
                 mirror_obj = curve_obj.modifiers[i].mirror_object
-                if (not border0[0].is_mirrored) or (not border2[0].is_mirrored):
+                if (not self.border0[0].is_mirrored) or (not self.border2[0].is_mirrored):
                     target = empty1
                     other = empty2
-                elif (not border0[-1].is_mirrored) or (not border2[-1].is_mirrored):
+                elif (not self.border0[-1].is_mirrored) or (not self.border2[-1].is_mirrored):
                     target = empty2
                     other = empty1
-                make_curve_mirror_bridge(curve_obj, target, other, mirror_obj, axis)
+                _, __, target_point, other_point = make_curve_mirror_bridge(curve_obj, target, other, mirror_obj, axis)
+                other_point.co = mirror_vec(target_point.co, mirror_obj, axis)
+                other_point.handle_left = mirror_vec(target_point.handle_right, mirror_obj, axis)
+                other_point.handle_right = mirror_vec(target_point.handle_left, mirror_obj, axis)
         elif y1 == (self.ytot // 2 - 1) and x2 == x1 and self.ytot % 2 == 0:
             res = check_curve_crosses_mirror(curve_obj, False)
             if res:
                 i, axis = res
                 mirror_obj = curve_obj.modifiers[i].mirror_object
-                if (not border1[0].is_mirrored) or (not border3[0].is_mirrored):
+                if (not self.border1[0].is_mirrored) or (not self.border3[0].is_mirrored):
                     target = empty1
                     other = empty2
-                elif (not border1[-1].is_mirrored) or (not border3[-1].is_mirrored):
+                elif (not self.border1[-1].is_mirrored) or (not self.border3[-1].is_mirrored):
                     target = empty2
                     other = empty1
-                make_curve_mirror_bridge(curve_obj, target, other, mirror_obj, axis)
+                _, __, target_point, other_point = make_curve_mirror_bridge(curve_obj, target, other, mirror_obj, axis)
+                other_point.co = mirror_vec(target_point.co, mirror_obj, axis)
+                other_point.handle_left = mirror_vec(target_point.handle_right, mirror_obj, axis)
+                other_point.handle_right = mirror_vec(target_point.handle_left, mirror_obj, axis)
     
     
     def add_real_curves(self, collection, context):
-        border0 = self.borders[self.optimal_quad[0]][self.optimal_quad[1]][1]
-        border1 = self.borders[self.optimal_quad[1]][self.optimal_quad[2]][1]
-        border2 = self.borders[self.optimal_quad[3]][self.optimal_quad[2]][1]
-        border3 = self.borders[self.optimal_quad[0]][self.optimal_quad[3]][1]
         empties_to_coplanar_collinear = set()
         sequence_of_xys = [self.generate_central()]
-        obj_for_mirror = border0[0].original_curve # some curve. We suppose here that all curves have the same mirrors TODO maybe do better
+        obj_for_mirror = self.border0[0].original_curve # some curve. We suppose here that all curves have the same mirrors TODO maybe do better
         if self.xtot == self.ytot:
             for side in range(4):
                 for part in range(2):
-                    if GlobalForSubdivide.is_real_side_part(side, part, (border0, border1, border2, border3)):
+                    if self.is_real_side_part(side, part):
                         sequence_of_xys.append(self.generate_triangle(side, part))
         else:
             for side in (0, 2):
                 for part in range(2):
-                    if GlobalForSubdivide.is_real_side_part(side, part, (border0, border1, border2, border3)):
+                    if self.is_real_side_part(side, part):
                         sequence_of_xys.append(self.generate_rect(side, part))
         for side in range(4):
-            if GlobalForSubdivide.is_real_side_part(side, 0, (border0, border1, border2, border3)) or\
-            GlobalForSubdivide.is_real_side_part(side, 1, (border0, border1, border2, border3)):
+            if self.is_real_side_part(side, 0) or\
+            self.is_real_side_part(side, 1):
                 sequence_of_xys.append(self.generate_strip(side))
         for xy1, xy2 in chain.from_iterable(sequence_of_xys):
-            self.add_real_curve(xy1, xy2, border0, border1, border2, border3, empties_to_coplanar_collinear, collection, obj_for_mirror)
+            self.add_real_curve(xy1, xy2, empties_to_coplanar_collinear, collection, obj_for_mirror)
         for empty_obj, end_name in empties_to_coplanar_collinear:
             if end_name is not None:
                 new_end = empty_obj.greg_empty_settings.curve_ends[end_name]
@@ -4639,29 +3804,30 @@ class MiddlePoint:
         self.co = new_total
 
 class PointForSubdivide:
-    def __init__(self, co, empty, number):
-        self.co = co
-        self.handle_right = None
-        self.handle_left = None
-        self.handle_other = None
-        self.empty = empty
-        self.curves = {}
-        self.number = number
+    def __init__(self, co: mathutils.Vector, empty: bpy.types.Object, number: int):
+        self.co: mathutils.Vector = co
+        self.handle_right: Optional[mathutils.Vector] = None
+        self.handle_left: Optional[mathutils.Vector] = None
+        self.handle_other: Optional[mathutils.Vector] = None
+        self.handle_outer: Optional[mathutils.Vector] = None
+        self.empty: bpy.types.Object = empty
+        self.curves: Dict[str, Tuple["CurveForSubdivide", int]] = {}
+        self.number: int = number
 
 class CurveForSubdivide:
-    def __init__(self, p1, p2, is_mirrored, original_curve, mirror_sequence=None):
-        self.points = p1, p2
-        self.is_mirrored = is_mirrored
-        self.original_curve = original_curve
+    def __init__(self, p1, p2, is_mirrored, original_curve, mirror_sequence: Optional[List["MirrorSequenceItem"]]=None):
+        self.points: Tuple[PointForSubdivide, PointForSubdivide] = p1, p2
+        self.is_mirrored: bool = is_mirrored
+        self.original_curve: bpy.types.Object = original_curve
         if mirror_sequence is None:
-            self.mirror_sequence = []
+            self.mirror_sequence: List["MirrorSequenceItem"] = []
         else:
             self.mirror_sequence = mirror_sequence
 
 class MirrorSequenceItem:
-    def __init__(self, mirror_object, axis):
-        self.mirror_object = mirror_object
-        self.axis = axis
+    def __init__(self, mirror_object: bpy.types.Object, axis: int):
+        self.mirror_object: bpy.types.Object = mirror_object
+        self.axis: int = axis
 
 class GregSubdivide(bpy.types.Operator):
     """Gregory: subdivide loop of curves"""
@@ -4889,9 +4055,6 @@ class CreateCurvesCollection(bpy.types.Operator):
             if s.use_cyclic_u:
                 spline.round_spline()
         glist.add_many_curves(active.name, active.users_collection[0], context)
-        '''new = glist.render_mesh(d, active.name, context)
-        if new is not None:
-            copy_transforms(active, new)'''
 
         return {'FINISHED'}            # Lets Blender know the operator finished successfully.
 
@@ -4912,10 +4075,7 @@ class CreateSurfacesBetweenCurves(bpy.types.Operator):
         glist.add_curves_and_bpoints()
         glist.add_quads()
         glist.calculate_kk()
-        new = glist.render_mesh(d, collection.name, context)
-        '''new = glist.render_mesh(d, active.name, context)
-        if new is not None:
-            copy_transforms(active, new)'''
+        glist.render_mesh(d, collection.name, context)
 
         return {'FINISHED'}            # Lets Blender know the operator finished successfully.
 
