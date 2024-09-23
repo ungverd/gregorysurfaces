@@ -4102,6 +4102,8 @@ class GregExtrude(bpy.types.Operator):
             co_s = [empty.matrix_world.translation] * 2
             handles_left = [curve.data.splines[0].bezier_points[i].handle_left - co_s[0]] * 2
             handles_right = [curve.data.splines[0].bezier_points[i].handle_right - co_s[0]] * 2
+            if i == 0:
+                handles_right, handles_left = handles_left, handles_right
             new_curve_obj, _ = add_curve_obj(collection, co_s, handles_left, handles_right)
             new_empty_obj = add_empty_obj(collection, co_s[0])
             old_end_name = add_curve_end(collection, empty, new_curve_obj, 0)
@@ -4269,6 +4271,8 @@ class CreateSurfacesBetweenCurves(bpy.types.Operator):
 def add_surface_menu_func(self, context: bpy.types.Context):
     self.layout.operator(CreateSurfacesBetweenCurves.bl_idname)
 
+addon_keymaps = []
+
 def register():
     bpy.utils.register_class(GregId)
     bpy.utils.register_class(GregArrowItem)
@@ -4322,9 +4326,22 @@ def register():
     bpy.utils.register_class(GregExtrude)
     bpy.types.VIEW3D_MT_object_context_menu.append(add_greg_extrude_func)
 
+    wm = bpy.context.window_manager
+    kc = wm.keyconfigs.addon
+    if kc:
+        km = wm.keyconfigs.addon.keymaps.new(name='3D View', space_type='VIEW_3D')
+        kmi = km.keymap_items.new(GregExtrude.bl_idname, type='E', value='PRESS', ctrl=True)
+        addon_keymaps.append((km, kmi))
+
     bpy.app.handlers.depsgraph_update_post.append(on_depsgraph_update)
     
 def unregister():
+
+    # Remove the hotkey
+    for km, kmi in addon_keymaps:
+        km.keymap_items.remove(kmi)
+    addon_keymaps.clear()
+
     bpy.utils.unregister_class(GregExtrude)
     bpy.utils.unregister_class(GregSubdivide)
     bpy.utils.unregister_class(OBJECT_PT_greg_curve_properties2)
