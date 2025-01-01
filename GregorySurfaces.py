@@ -27,7 +27,7 @@ from itertools import chain
 import bpy
 import bmesh
 import mathutils
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Tuple, Dict, Set
 from enum import Enum
 import math
 
@@ -132,12 +132,10 @@ def repare_end(curve_obj, empty_obj, end_name, i):
     setting.name = end_name
     setting.empty = empty_obj
     if collinear_end is not None:
-        setting.is_collinear = True
         c1 = setting.collinear_to.add()
         c1.name = collinear_end.name
         c1.curve = collinear_end.basic_end.curve
         c1.end = collinear_end.basic_end.end
-        collinear_end.is_collinear = True
         for other_basic_end in collinear_end.collinear_to:
             c1 = setting.collinear_to.add()
             c1.name = other_basic_end.name
@@ -260,7 +258,6 @@ def add_arrow_to_end_in_empty(empty_obj, end):
                 new_arrow_item = end.coplanar_vectors.add()
                 new_arrow_item.name = arrow_item.name
                 new_arrow_item.arrow = arrow_item.arrow
-                end.is_coplanar = True
 
 
     
@@ -275,7 +272,7 @@ def preserve_points(curve_obj):
         if (spline.bezier_points[i].co - empty.matrix_world.translation).length_squared > TH2:
             spline.bezier_points[i].co = empty.matrix_world.translation
 
-def rotate_end_to_vec(vec, basic_end):
+def rotate_end_to_vec(vec: mathutils.Vector, basic_end: "GregBasicEnd"):
     spline = basic_end.curve.data.splines[0]
     i = basic_end.end
     p = spline.bezier_points[i]
@@ -872,13 +869,6 @@ def grid_fill(verts1: List[mathutils.Vector],
 def are_coplanar(v1: mathutils.Vector, v2: mathutils.Vector, v3: mathutils.Vector):
     return abs(mathutils.Matrix((v1.normalized(), v2.normalized(), v3.normalized())).determinant()) < TH
 
-def make_coplanar(v1: mathutils.Vector, v2: mathutils.Vector, v3: mathutils.Vector):
-    v4 = v2 - v3
-    normal = v1.cross(v4)
-    new_v2 = v2 - v2.project(normal)
-    new_v3 = v3 - v3.project(normal)
-    return (new_v2, new_v3)
-
 def are_collinear(v1: mathutils.Vector, v2: mathutils.Vector):
     return (v1.normalized().cross(v2.normalized())).length < TH
 
@@ -1256,37 +1246,34 @@ def coplanar_collinear(empty: bpy.types.Object, collection: bpy.types.Collection
     for se, vec in final_sets_and_vectors:
         add_coplanar_arrow(se, vec, empty, collection)
 
-def extract_handles(ends):
+def extract_vectors_from_ends(ends: List["GregCurveEndItem"]):
     handles: List[mathutils.Vector] = []
     for end in ends:
-        spline = end.basic_end.curve.data.splines[0]
-        i = end.basic_end.end
-        point = spline.bezier_points[i]
-        co = point.co
-        if i == 0:
-            ha = point.handle_right
-        else:
-            ha = point.handle_left
-        handles.append(ha - co)
+        handles.append(extract_vector_from_basic_end(end.basic_end))
     return handles
 
-def check_ends_collinear(end1, end2):
+def extract_vector_from_basic_end(basic_end: "GregBasicEnd"):
+    spline = basic_end.curve.data.splines[0]
+    i = basic_end.end
+    point = spline.bezier_points[i]
+    co = point.co
+    if i == 0:
+        ha = point.handle_right
+    else:
+        ha = point.handle_left
+    return ha - co
+
+def check_ends_collinear(end1: "GregCurveEndItem", end2: "GregCurveEndItem"):
     ends = (end1, end2)
-    handles = extract_handles(ends)
+    handles = extract_vectors_from_ends(ends)
     if are_collinear(*handles):
-        for i in range(2):
-            this_end = ends[i]
-            other_end = ends[1-i]
-            this_end.is_collinear = True
-            basic_end = this_end.collinear_to.add()
-            basic_end.curve = other_end.basic_end.curve
-            basic_end.end = other_end.basic_end.end
-            basic_end.name = other_end.basic_end.name
+        common_empty = end1.empty
+        set_ends_collinear_to_one_another(end1, end2, common_empty)
 
 def check_ends_coplanar(ends1, ends2, ends3, empty, collection: bpy.types.Collection):
     handles: List[mathutils.Vector] = []
     ends = (ends1[0], ends2[0], ends3[0])
-    handles = extract_handles(ends)
+    handles = extract_vectors_from_ends(ends)
     if are_coplanar(*handles):
         coplanar_vector = (handles[0].cross(handles[1])).normalized()
         return coplanar_vector
@@ -1332,7 +1319,6 @@ def add_coplanar_arrow(set_ends, coplanar_vector: mathutils.Vector, empty: bpy.t
         constraint.use_min_z = True
         constraint.enabled = True
         for end in set_ends:
-            end.is_coplanar = True
             end_setting = end.coplanar_vectors.add()
             end_setting.arrow = arrow
             end_setting.name = name
@@ -1420,6 +1406,28 @@ def get_greg_collection(obj):
         if collection.greg_settings.used_for_greg:
             return collection
 
+def remove_coplanar(end: "GregCurveEndItem", end_name: str, empty: bpy.types.Object, collection: bpy.types.Collection):
+    for arrow_item in end.coplanar_vectors:
+        arrow = arrow_item.arrow
+        arrow_name = arrow_item.name
+        end_setting = arrow.greg_arrow_settings.coplanars.find(end_name)
+        arrow.greg_arrow_settings.coplanars.remove(end_setting)
+        groups_num = get_coplanar_groups_num(arrow)
+        if groups_num < 3:
+            empty_setting = empty.greg_empty_settings.coplanars.find(arrow_name)
+            empty.greg_empty_settings.coplanars.remove(empty_setting)
+            collection_setting = collection.greg_settings.arrows.find(arrow_name)
+            collection.greg_settings.arrows.remove(collection_setting)
+            for basic_end in arrow.greg_arrow_settings.coplanars:
+                other_end = empty.greg_empty_settings.curve_ends[basic_end.name]
+                other_end_setting = other_end.coplanar_vectors.find(arrow_name)
+                other_end.coplanar_vectors.remove(other_end_setting)
+                if len(other_end.coplanar_vectors) == 0:
+                    if other_end.name != end_name:
+                        apply_hook(other_end)
+                        add_hook(other_end)
+            bpy.data.objects.remove(arrow, do_unlink=True)
+
 def remove_curve_from_greg_structure(curve_obj: bpy.types.Object, collection: Optional[bpy.types.Collection] = None):
     #print("before remove")
     #print_structure(collection)
@@ -1442,30 +1450,8 @@ def remove_curve_from_greg_structure(curve_obj: bpy.types.Object, collection: Op
             for other_basic_end in end.collinear_to:
                 other_end = empty.greg_empty_settings.curve_ends[other_basic_end.name]
                 other_end.collinear_to.remove(other_end.collinear_to.find(end_name))
-                if len(other_end.collinear_to) == 0:
-                    other_end.is_collinear = False
         if end.is_coplanar:
-            for arrow_item in end.coplanar_vectors:
-                arrow = arrow_item.arrow
-                arrow_name = arrow_item.name
-                end_setting = arrow.greg_arrow_settings.coplanars.find(end_name)
-                arrow.greg_arrow_settings.coplanars.remove(end_setting)
-                groups_num = get_coplanar_groups_num(arrow)
-                if groups_num < 3:
-                    empty_setting = empty.greg_empty_settings.coplanars.find(arrow_name)
-                    empty.greg_empty_settings.coplanars.remove(empty_setting)
-                    collection_setting = collection.greg_settings.arrows.find(arrow_name)
-                    collection.greg_settings.arrows.remove(collection_setting)
-                    for basic_end in arrow.greg_arrow_settings.coplanars:
-                        other_end = empty.greg_empty_settings.curve_ends[basic_end.name]
-                        other_end_setting = other_end.coplanar_vectors.find(arrow_name)
-                        other_end.coplanar_vectors.remove(other_end_setting)
-                        if len(other_end.coplanar_vectors) == 0:
-                            other_end.is_coplanar = False
-                            if other_end.name != end_name:
-                                apply_hook(other_end)
-                                add_hook(other_end)
-                    bpy.data.objects.remove(arrow, do_unlink=True)
+            remove_coplanar(end, end_name, empty, collection)
         empty_setting = empty.greg_empty_settings.curve_ends.find(end_name)
         empty.greg_empty_settings.curve_ends.remove(empty_setting)
         if len(empty.greg_empty_settings.curve_ends) == 0:
@@ -1586,13 +1572,13 @@ class NewGlobalList:
         bpoints_verified.pop()
         return StepRes.NOT_FINISHED
     
-    def extract_handle_phantom(self, end):
+    def extract_handle_phantom(self, end: "GregPhantomCurveEnd"):
         curve = self.collection.greg_settings.phantom_curves[end.curve_name]
         bpoint = self.collection.greg_settings.phantom_bpoints[end.bpoint_name]
         handle = curve.handle1 if end.curve_i == 0 else curve.handle2
         return handle - bpoint.co
     
-    def are_collinear(self, end1, end2):
+    def are_collinear(self, end1: "GregPhantomCurveEnd", end2: "GregPhantomCurveEnd"):
         v1, v2 = [self.extract_handle_phantom(end) for end in (end1, end2)]
         if logging[1]:
             print(v1, v2)
@@ -1601,7 +1587,7 @@ class NewGlobalList:
 
     def step_curve(self,
                    initial_bpoint,
-                   phantom_curve,
+                   phantom_curve: "GregPhantomCurve",
                    end_i,
                    curves_verified,
                    bpoints_verified,
@@ -1645,19 +1631,19 @@ class NewGlobalList:
                         return StepRes.NOT_FINISHED
         return StepRes.NOT_FINISHED
     
-    def verify_and_init_quad(self, curves_verified, end0):
+    def verify_and_init_quad(self, curves_verified: "GregPhantomCurve", end0):
         first_curve = curves_verified[0]
         first_bpoint = self.collection.greg_settings.phantom_bpoints[first_curve.bpoint1_name]
         first_vec = first_curve.handle1 - first_bpoint.co
         other_vec = self.extract_handle_phantom(end0)
         if are_collinear(first_vec, other_vec):
             return False
-
-        sets = [set(el.name for el in phantom_curve.source_curve.greg_curve_settings.not_face_ids)
-                for phantom_curve in curves_verified]
-        common = set.intersection(*sets)
-        if common: # there is a common not_face
-            return False
+        set_faces = set([phantom_curve.source_curve.greg_curve_settings.name for phantom_curve in curves_verified])
+        for phantom_curve in curves_verified:
+            not_faces_sets = get_not_face_ids(phantom_curve.source_curve)
+            for se in not_faces_sets:
+                if se == set_faces:
+                    return False
         quad = self.collection.greg_settings.quads.add()
         quad.name = "_".join(sorted(
             [phantom_curve.name for phantom_curve in curves_verified]
@@ -2236,12 +2222,16 @@ class GregArrow(bpy.types.PropertyGroup):
 class GregCurveEndItem(bpy.types.PropertyGroup):
     basic_end: bpy.props.PointerProperty(type=GregBasicEnd)
     empty: bpy.props.PointerProperty(type=bpy.types.Object)
-    is_coplanar: bpy.props.BoolProperty(default=False)
     coplanar_vectors: bpy.props.CollectionProperty(type=GregArrowItem)
-    is_collinear: bpy.props.BoolProperty(default=False)
     collinear_to: bpy.props.CollectionProperty(type=GregBasicEnd)
     hook: bpy.props.StringProperty(default="")
     name: bpy.props.StringProperty(default="")
+    @property
+    def is_coplanar(self):
+        return len(self.coplanar_vectors) > 0
+    @property
+    def is_collinear(self):
+        return len(self.collinear_to) > 0
 
 class GregEmptyItem(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty(default="")
@@ -2335,7 +2325,6 @@ class GregCurve(bpy.types.PropertyGroup):
     end1_name: bpy.props.StringProperty(default="")
     end2_name: bpy.props.StringProperty(default="")
     name: bpy.props.StringProperty(default="")
-    not_face_ids: bpy.props.CollectionProperty(type=GregId)
     phantom_curves_ids: bpy.props.CollectionProperty(type=GregId)
     is_mirror_bridge: bpy.props.BoolProperty(default=False)
     bridge_mirror_object: bpy.props.PointerProperty(type=bpy.types.Object)
@@ -2369,7 +2358,7 @@ def add_one_curve(curves, is_added, now_curve, end_to_add):
                 return is_added, curve, new_end
     return False
 
-'''def verify_is_closed_path(curves):
+'''def verify_is_closed_path_and_of_length_4(curves: List[bpy.types.Object]):
     is_added = {curve.greg_curve_settings.name: False for curve in curves}
     first_curve = curves[0]
     first_empty = first_curve.greg_curve_settings.end1_empty
@@ -2392,7 +2381,7 @@ def add_one_curve(curves, is_added, now_curve, end_to_add):
         return False
     if possible_curves[first_curve_name] == 0:
         return False
-    return True'''
+    return True''' # TODO
 
 def print_end(end):
     print("end:")
@@ -3859,6 +3848,7 @@ def coplanar_collinear_add_one_end(empty_obj, collection, new_end):
     
     for end1 in empty_obj.greg_empty_settings.curve_ends:
         if end1 != new_end:
+            print("here")
             check_ends_collinear(end1, new_end)
     collinear_groups = []
     used_dict = {end.name: False for end in empty_obj.greg_empty_settings.curve_ends}
@@ -3902,20 +3892,21 @@ def coplanar_collinear_add_one_end(empty_obj, collection, new_end):
                     common_arrows = common_arrows.intersection(set(vec.arrow for vec in end.coplanar_vectors))
         if len(common_arrows) > 0:
             target_arrow = common_arrows[0]
-            new_end.is_coplanar = True
-            end_setting = new_end.coplanar_vectors.add()
-            end_setting.arrow = target_arrow
-            end_setting.name = target_arrow.greg_arrow_settings.name
-            arrow_setting = target_arrow.greg_arrow_settings.coplanars.add()
-            arrow_setting.name = new_end.name
-            arrow_setting.curve = new_end.basic_end.curve
-            arrow_setting.end = new_end.basic_end.end
+            add_one_end_to_arrow(new_end, target_arrow)
         else:
             add_coplanar_arrow(se, vec, empty_obj, collection)
     
     for end in empty_obj.greg_empty_settings.curve_ends:
         add_hook(end)
 
+def add_one_end_to_arrow(end: GregCurveEndItem, arrow_obj: bpy.types.Object):
+    end_setting = end.coplanar_vectors.add()
+    end_setting.arrow = arrow_obj
+    end_setting.name = arrow_obj.greg_arrow_settings.name
+    arrow_setting = arrow_obj.greg_arrow_settings.coplanars.add()
+    arrow_setting.name = end.name
+    arrow_setting.curve = end.basic_end.curve
+    arrow_setting.end = end.basic_end.end
 
 class MiddlePoint:
     def __init__(self, co: mathutils.Vector):
@@ -4068,12 +4059,16 @@ class GregExtrude(bpy.types.Operator):
     def poll(cls, context: bpy.types.Context):
         if context.mode != "OBJECT":
             return False
-        empty = context.active_object
-        if empty is None:
+        selected = context.selected_objects
+        empties = [obj for obj in selected if obj.greg_empty_settings.used_for_greg]
+        if len(empties) != 1:
             return False
-        if len(context.selected_objects) > 2:
+        empty = empties[0]
+        if len(selected) > 2:
             return False
-        candidates = [obj for obj in context.selected_objects if obj != empty]
+        candidates = [obj for obj in selected if obj != empty]
+        if len(candidates) > 1:
+            return False
         if len(candidates) == 1:
             if not candidates[0].greg_curve_settings.used_for_greg:
                 return False
@@ -4081,12 +4076,17 @@ class GregExtrude(bpy.types.Operator):
             empties = [curve.greg_curve_settings.end1_empty, curve.greg_curve_settings.end2_empty]
             if empty not in empties:
                 return False
-        return empty.greg_empty_settings.used_for_greg
+        return True
 
     def execute(self, context: bpy.types.Context):        # execute() is called when running the operator.
-        empty = context.active_object
+        selected = context.selected_objects
+        empties = [obj for obj in selected if obj.greg_empty_settings.used_for_greg]
+        empty = empties[0]
         collection = get_greg_collection(empty)
-        candidates = [obj for obj in context.selected_objects if obj != empty]
+        candidates = [obj for obj in selected if obj != empty]
+        for obj in selected:
+            obj.select_set(False)
+        co = empty.matrix_world.translation
         if len(candidates) == 1:
             curve = candidates[0]
             empties = [curve.greg_curve_settings.end1_empty, curve.greg_curve_settings.end2_empty]
@@ -4097,34 +4097,207 @@ class GregExtrude(bpy.types.Operator):
                 end_name = curve.greg_curve_settings.end2_name
                 i = 1
             end = empty.greg_empty_settings.curve_ends[end_name]
-            apply_hook(end)
-            add_hook(end)
-            co_s = [empty.matrix_world.translation] * 2
-            handles_left = [curve.data.splines[0].bezier_points[i].handle_left - co_s[0]] * 2
-            handles_right = [curve.data.splines[0].bezier_points[i].handle_right - co_s[0]] * 2
-            if i == 0:
-                handles_right, handles_left = handles_left, handles_right
-            new_curve_obj, _ = add_curve_obj(collection, co_s, handles_left, handles_right)
-            new_empty_obj = add_empty_obj(collection, co_s[0])
-            old_end_name = add_curve_end(collection, empty, new_curve_obj, 0)
-            new_end_name = add_curve_end(collection, new_empty_obj, new_curve_obj, 1)
-            old_new_end = empty.greg_empty_settings.curve_ends[old_end_name]
-            coplanar_collinear_add_one_end(empty, collection, old_new_end)
-            add_hook(old_new_end)
-            new_new_end = new_empty_obj.greg_empty_settings.curve_ends[new_end_name]
-            add_hook(new_new_end)
-            curve.select_set(False)
-            empty.select_set(False)
-            new_empty_obj.select_set(True)
-            context.view_layer.objects.active = new_empty_obj
-            bpy.ops.transform.translate('INVOKE_DEFAULT')
-
-
+            handle_left, handle_right = apply_hook_and_get_handles_from_end(end, curve, i, co)
+            add_curve_by_extrude(empty, co, handle_left, handle_right, collection, context)
+        elif len(candidates) == 0:
+            num_ends = len(empty.greg_empty_settings.curve_ends)
+            if num_ends == 0:
+                handle_left = mathutils.Vector((1, 0, 0))
+                handle_right = mathutils.Vector((-1, 0, 0))
+                add_curve_by_extrude(empty, co, handle_left, handle_right, collection, context)
+            elif num_ends == 1:
+                end = empty.greg_empty_settings.curve_ends[0]
+                curve = end.basic_end.curve
+                i = end.basic_end.end
+                handle_left, handle_right = apply_hook_and_get_handles_from_end(end, curve, i, co)
+                add_curve_by_extrude(empty, co, handle_left, handle_right, collection, context)
+            else:
+                for end in empty.greg_empty_settings.curve_ends:
+                    apply_hook(end)
+            vecs = extract_vectors_from_ends(empty.greg_empty_settings.curve_ends)
+            handle_left, handle_right = get_handles_from_vecs_to_extrude(vecs)
+            add_curve_by_extrude(empty, co, handle_left, handle_right, collection, context)
         return {'FINISHED'}    
 
 def add_greg_extrude_func(self, context: bpy.types.Context):
     self.layout.operator(GregExtrude.bl_idname)
 
+def apply_hook_and_get_handles_from_end(end: GregCurveEndItem,
+                                        curve: bpy.types.Object,
+                                        i: int,
+                                        co: mathutils.Vector) -> Tuple[mathutils.Vector, mathutils.Vector]:
+    apply_hook(end)
+    add_hook(end)
+    handle_left = curve.data.splines[0].bezier_points[i].handle_left - co
+    handle_right = curve.data.splines[0].bezier_points[i].handle_right - co
+    if i == 0:
+        handle_right, handle_left = handle_left, handle_right
+    return handle_left, handle_right
+
+def add_curve_by_extrude(empty: bpy.types.Object,
+                         co: mathutils.Vector,
+                         handle_left: mathutils.Vector,
+                         handle_right: mathutils.Vector,
+                         collection: bpy.types.Collection,
+                         context: bpy.types.Context):
+    co_s = [co] * 2
+    handles_left = [handle_left] * 2
+    handles_right = [handle_right] * 2
+    new_curve_obj, _ = add_curve_obj(collection, co_s, handles_left, handles_right)
+    new_empty_obj = add_empty_obj(collection, co_s[0])
+    old_end_name = add_curve_end(collection, empty, new_curve_obj, 0)
+    new_end_name = add_curve_end(collection, new_empty_obj, new_curve_obj, 1)
+    old_new_end = empty.greg_empty_settings.curve_ends[old_end_name]
+    coplanar_collinear_add_one_end(empty, collection, old_new_end)
+    add_hook(old_new_end)
+    new_new_end = new_empty_obj.greg_empty_settings.curve_ends[new_end_name]
+    add_hook(new_new_end)
+    new_empty_obj.select_set(True)
+    context.view_layer.objects.active = new_empty_obj
+    bpy.ops.transform.translate('INVOKE_DEFAULT')
+
+def get_handles_from_vecs_to_extrude(vecs: List[mathutils.Vector]) -> Tuple[mathutils.Vector, mathutils.Vector]:
+    mean_length = sum([vec.length for vec in vecs]) / len(vecs)
+    if verify_all_vecs_collinear(vecs):
+        result_vec = get_perpendicular_vec(vecs[0])
+    else:
+        result_vec = vector_mean(vecs)
+        if result_vec.length < mean_length * 0.3:
+            result_vec = get_normal_vector(vecs)
+    handle_left = result_vec * mean_length / result_vec.length
+    return handle_left, -handle_left
+
+def get_perpendicular_vec(vec: mathutils.Vector):
+    def setone(lst, i):
+        lst[i] = 1
+        return lst
+    xyz = [vec.cross(mathutils.Vector(setone([0, 0, 0], i))) for i in range(3)]
+    return max(xyz, key=lambda x: x.length)
+
+def verify_all_vecs_collinear(vecs: List[mathutils.Vector]):
+    vec0 = vecs[0]
+    for vec in vecs[1:]:
+        if not are_collinear(vec0, vec):
+            return False
+    return True
+
+def vector_mean(vecs: List[mathutils.Vector]):
+    accumulator = mathutils.Vector((0,0,0))
+    for vec in vecs:
+        accumulator += vec
+    return accumulator / len(vecs)
+
+def merge_poll(context):
+    if context.mode != "OBJECT":
+        return False
+    if len(context.selected_objects) != 2:
+        return False
+    for object in context.selected_objects:
+        if not object.greg_empty_settings.used_for_greg:
+            return False
+    if get_greg_collection(context.selected_objects[0]) != get_greg_collection(context.selected_objects[1]):
+        return False
+    return True
+
+def merge_empties(empty1, empty2):
+    collection = get_greg_collection(empty1)
+    for end in empty1.greg_empty_settings.curve_ends:
+        apply_hook(end)
+    for end in empty2.greg_empty_settings.curve_ends:
+        apply_hook(end)
+        curve_obj = end.basic_end.curve
+        end_i = end.basic_end.end
+        new_end_name = add_curve_end(collection, empty1, curve_obj, end_i)
+        new_end = empty1.greg_empty_settings.curve_ends[new_end_name]
+        coplanar_collinear_add_one_end(empty1, collection, new_end)
+    for end in empty1.greg_empty_settings.curve_ends:
+        add_hook(end)
+    #delete old empty2
+    empty2.greg_empty_settings.curve_ends.clear()
+    arrows_to_delete = []
+    for arrow in empty2.greg_empty_settings.coplanars:
+        arrows_to_delete.append(arrow.arrow)
+        collection.greg_settings.arrows.remove(collection.greg_settings.arrows.find(arrow.name))
+    empty2.greg_empty_settings.coplanars.clear()
+    objs = bpy.data.objects
+    for obj in arrows_to_delete:
+        objs.remove(obj, do_unlink=True)
+    collection.greg_settings.empties.remove(collection.greg_settings.empties.find(empty2.greg_empty_settings.name))
+    objs.remove(empty2, do_unlink=True)
+
+
+class GregMergeAtCenter(bpy.types.Operator):
+    """Gregory: merge two points at center"""
+    bl_idname = "object.greg_merge_center"
+    bl_label = "merge at center"         # Display name in the interface.
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context):
+        return merge_poll(context)
+
+    def execute(self, context: bpy.types.Context):        # execute() is called when running the operator.
+        empty1, empty2 = context.selected_objects
+        # merge at center
+        center_location = (empty1.location + empty2.location) / 2
+        empty1.location = center_location
+        empty2.location = center_location
+        merge_empties(empty1, empty2)
+        return {'FINISHED'}
+
+def get_first_second_from_two_selected(context: bpy.types.Context):
+    objs = context.selected_objects
+    last = context.active_object
+    first = [obj for obj in objs if obj != last][0]
+    return first, last
+
+class GregMergeAtFirst(bpy.types.Operator):
+    """Gregory: merge two points at first"""
+    bl_idname = "object.greg_merge_first"
+    bl_label = "merge at first"         # Display name in the interface.
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context):
+        return merge_poll(context)
+
+    def execute(self, context: bpy.types.Context):        # execute() is called when running the operator.
+        empty1, empty2 = get_first_second_from_two_selected(context)
+        # merge at first
+        empty2.location = empty1.location
+        merge_empties(empty1, empty2)
+        return {'FINISHED'}
+
+class GregMergeAtLast(bpy.types.Operator):
+    """Gregory: merge two points at last"""
+    bl_idname = "object.greg_merge_last"
+    bl_label = "merge at last"         # Display name in the interface.
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context):
+        return merge_poll(context)
+
+    def execute(self, context: bpy.types.Context):        # execute() is called when running the operator.
+        empty1, empty2 = get_first_second_from_two_selected(context)
+        # merge at last
+        empty1.location = empty2.location
+        merge_empties(empty1, empty2)
+        return {'FINISHED'} 
+
+class GregMergeSub(bpy.types.Menu):
+    bl_label = 'Greg: merge'
+    bl_idname = 'VIEW3D_MT_merge_submenu'
+
+    def draw(self, context):
+        layout = self.layout
+        #layout.label("This is a submenu")
+        layout.operator(GregMergeAtCenter.bl_idname)
+        layout.operator(GregMergeAtFirst.bl_idname)
+        layout.operator(GregMergeAtLast.bl_idname)
+
+def add_greg_merge_func(self, context: bpy.types.Context):
+    self.layout.menu(GregMergeSub.bl_idname)
 
 class PrintDotInfo(bpy.types.Operator):
     """Gregory: print info about selected curve, arrow or empty"""
@@ -4178,18 +4351,18 @@ class PrintDotInfo(bpy.types.Operator):
 def add_print_dot_func(self, context: bpy.types.Context):
     self.layout.operator(PrintDotInfo.bl_idname)        
 
-'''class SetNotFace(bpy.types.Operator):
+class SetNotFace(bpy.types.Operator):
     """Gregory: set loop of curves not face"""
     bl_idname = "object.greg_set_not_face"
-    bl_label = "Set loop not face"         # Display name in the interface.
+    bl_label = "greg: set loop not face"         # Display name in the interface.
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context: bpy.types.Context):
         if context.mode != "OBJECT":
             return False
-        slen = len(context.selected_objects)
-        if slen < 4 and slen % 2 != 0:
+        selected = context.selected_objects
+        if len(selected) < 1 or len(selected) > 4:
             return False
         prev_collection = None
         for obj in context.selected_objects:
@@ -4200,22 +4373,29 @@ def add_print_dot_func(self, context: bpy.types.Context):
             else:
                 if get_greg_collection(obj) != prev_collection:
                     return False
-        if not verify_is_closed_path(context.selected_objects):
-            return False
+        '''if not verify_is_closed_path_and_of_length_4(selected):
+            return False''' # TODO
         return True
 
     def execute(self, context: bpy.types.Context):        # execute() is called when running the operator.
-        collection = get_greg_collection(context.selected_objects[0])
-        id = get_next_id(collection)
-        for curve in context.selected_objects:
-            id_setting = curve.greg_curve_settings.not_face_ids.add()
-            id_setting.name = id
+        col = bpy.data.collections.new("NotFaceCollection")
+        col.greg_is_not_face = True
+        for obj in context.selected_objects:
+            col.objects.link(obj)
         
 
         return {'FINISHED'}
 
 def set_not_face_menu_func(self, context: bpy.types.Context):
-    self.layout.operator(SetNotFace.bl_idname)'''
+    self.layout.operator(SetNotFace.bl_idname)
+
+def get_not_face_ids(curve_obj: bpy.types.Object) -> List[Set[str]]:
+    not_face_ids_groups = []
+    for col in curve_obj.users_collection:
+        if col.greg_is_not_face:
+            not_face_ids = set([obj.greg_curve_settings.name for obj in col.objects])
+            not_face_ids_groups.append(not_face_ids)
+    return not_face_ids_groups
 
 class CreateCurvesCollection(bpy.types.Operator):
     """Gregory: create curves"""      # Use this as a tooltip for menu items and buttons.
@@ -4271,6 +4451,565 @@ class CreateSurfacesBetweenCurves(bpy.types.Operator):
 def add_surface_menu_func(self, context: bpy.types.Context):
     self.layout.operator(CreateSurfacesBetweenCurves.bl_idname)
 
+def verify_empty_is_other_mirrored(empty: bpy.types.Object):
+    for curve_end in empty.greg_empty_settings.curve_ends:
+        curve_settings = curve_end.basic_end.curve.greg_curve_settings
+        if curve_settings.is_mirror_bridge:
+            if curve_settings.bridge_mirror_other_i == 0:
+                if empty == curve_settings.end1_empty:
+                    return True
+            elif curve_settings.bridge_mirror_other_i == 1:
+                if empty == curve_settings.end2_empty:
+                    return True
+    return False
+
+class PartialGlobalList:
+    def __init__(self):
+        self.bpoints: List["PartialBigPoint"] = []
+        self.curves: List["PartialCurve"] = []
+    
+    def addBp(self, co: mathutils.Vector, collection_empties: List[bpy.types.Object]):
+        for bp in self.bpoints:
+            if same_coords(bp.co, co):
+                return bp
+        for e in collection_empties:
+            if same_coords(e.matrix_world.translation, co):
+                new_bp = PartialBigPoint(co, e)
+                self.bpoints.append(new_bp)
+                return new_bp
+        new_bp = PartialBigPoint(co)
+        self.bpoints.append(new_bp)
+        return new_bp
+    
+    def add_curves_and_empties(self, collection):
+        for bp in self.bpoints:
+            if bp.Empty is None:
+                empty = add_empty_obj(collection, bp.co)
+                bp.new_empty = empty
+        for curve in self.curves:
+            curve_obj, _ = add_curve_obj(collection,
+                          (curve.bp1.co, curve.bp2.co),
+                          (curve.hl1, curve.hl2),
+                          (curve.hr1, curve.hr2))
+            for i, bp in enumerate((curve.bp1, curve.bp2)):
+                if bp.Empty is None:
+                    empty_obj = bp.new_empty
+                else:
+                    empty_obj = bp.Empty
+                new_end_name = add_curve_end(collection, empty_obj, curve_obj, i)
+                new_end = empty_obj.greg_empty_settings.curve_ends[new_end_name]
+                coplanar_collinear_add_one_end(empty_obj, collection, new_end)
+        for bp in self.bpoints:
+            if bp.Empty is None:
+                coplanar_collinear(bp.new_empty, collection)
+                empty_obj = bp.new_empty
+            else:
+                empty_obj = bp.Empty
+            for end in empty_obj.greg_empty_settings.curve_ends:
+                add_hook(end)
+
+class PartialCurve:
+    def __init__(self,
+                 bezier_point1: bpy.types.BezierSplinePoint,
+                 bezier_point2: bpy.types.BezierSplinePoint,
+                 collection_empties: List[bpy.types.Object],
+                 p_glist: PartialGlobalList,
+                 prev_ready=False):
+        if prev_ready:
+            self.bp1 = p_glist.curves[-1].bp2
+        else:
+            self.bp1 = p_glist.addBp(bezier_point1.co, collection_empties)
+        self.bp2 = p_glist.addBp(bezier_point2.co, collection_empties)
+        self.hr1 = bezier_point1.handle_right - bezier_point1.co
+        self.hl1 = bezier_point1.handle_left - bezier_point1.co
+        self.hr2 = bezier_point2.handle_right - bezier_point2.co
+        self.hl2 = bezier_point2.handle_left - bezier_point2.co
+        self.bp1.add_curve(self, 0)
+        self.bp2.add_curve(self, 1)
+        p_glist.curves.append(self)
+        
+        
+        
+
+class PartialBigPoint:
+    def __init__(self, co: mathutils.Vector, empty: Optional[bpy.types.Object]=None):
+        self.co = co
+        self.Empty = empty
+        self.curves: List[Tuple[PartialCurve, int]] = []
+        self.new_empty: Optional[bpy.types.Object] = None
+    
+    def add_curve(self, curve: PartialCurve, i: int):
+        self.curves.append((curve, i))
+
+class AddBezierCurve(bpy.types.Operator):
+    """Gregory: add curve to structure"""     # Use this as a tooltip for menu items and buttons.
+    bl_idname = "object.greg_add_curve_to_structure"        # Unique identifier for bu: bpy.types.Contextttons and menu items to reference.
+    bl_label = "Greg: add curve"         # Display name in the interface.
+    bl_options = {'REGISTER', 'UNDO'}  # Enable undo for the operator.
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context):
+        if len(context.selected_objects) != 2:
+            return False
+        for obj in context.selected_objects:
+            if obj.type != 'CURVE':
+                return False
+        counted = [obj for obj in context.selected_objects if obj.greg_curve_settings.used_for_greg]
+        if len(counted) != 1:
+            return False
+        return True
+    
+    def execute(self, context: bpy.types.Context):
+        in_structure = [obj for obj in context.selected_objects if obj.greg_curve_settings.used_for_greg][0]
+        to_add = [obj for obj in context.selected_objects if obj != in_structure][0]
+        #apply transforms
+        mb = to_add.matrix_basis
+        to_add.data.transform(mb)
+        to_add.matrix_basis.identity()
+        collection = get_greg_collection(in_structure)
+        collection_empties = [e.empty for e in collection.greg_settings.empties if not verify_empty_is_other_mirrored(e.empty)]
+        p_glist = PartialGlobalList()
+        for spline in to_add.data.splines:
+            for i in range(len(spline.bezier_points) - 1):
+                p1 = spline.bezier_points[i]
+                p2 = spline.bezier_points[i + 1]
+                prev_ready = (i > 0)
+                PartialCurve(p1, p2, collection_empties, p_glist, prev_ready)
+        p_glist.add_curves_and_empties(collection)
+        bpy.data.objects.remove(to_add, do_unlink=True)
+        return {'FINISHED'}            # Lets Blender know the operator finished successfully.
+
+def add_bezier_curve_menu_func(self, context: bpy.types.Context):
+    self.layout.operator(AddBezierCurve.bl_idname)
+
+class SetNotCoplanar(bpy.types.Operator):
+    """Gregory: set not coplanar"""      # Use this as a tooltip for menu items and buttons.
+    bl_idname = "object.greg_set_not_coplanar"        # Unique identifier for bu: bpy.types.Contextttons and menu items to reference.
+    bl_label = "Greg: set not coplanar"         # Display name in the interface.
+    bl_options = {'REGISTER', 'UNDO'}  # Enable undo for the operator.
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context):
+        selected = context.selected_objects
+        if len(selected) < 2:
+            return False
+        curves = [obj for obj in selected if obj.greg_curve_settings.used_for_greg]
+        if len(curves) < 1:
+            return False
+        empty_l = [obj for obj in selected if obj.greg_empty_settings.used_for_greg]
+        if len(empty_l) != 1:
+            return False
+        empty = empty_l[0]
+        connected_curves = [end.basic_end.curve for end in empty.greg_empty_settings.curve_ends]
+        for curve in curves:
+            if curve not in connected_curves:
+                return False
+        for curve in curves:
+            empties = [curve.greg_curve_settings.end1_empty, curve.greg_curve_settings.end2_empty]
+            if empty in empties:
+                if empty == curve.greg_curve_settings.end1_empty:
+                    end_name = curve.greg_curve_settings.end1_name
+                else:
+                    end_name = curve.greg_curve_settings.end2_name
+                if not empty.greg_empty_settings.curve_ends[end_name].is_coplanar:
+                    return False
+            else:
+                return False
+        return True
+
+    def execute(self, context: bpy.types.Context):        # execute() is called when running the operator.
+        selected = context.selected_objects
+        curves = [obj for obj in selected if obj.greg_curve_settings.used_for_greg]
+        empty = [obj for obj in selected if obj.greg_empty_settings.used_for_greg][0]
+        for curve in curves:
+            if empty == curve.greg_curve_settings.end1_empty:
+                end_name = curve.greg_curve_settings.end1_name
+            else:
+                end_name = curve.greg_curve_settings.end2_name
+            end = empty.greg_empty_settings.curve_ends[end_name]
+            collection = get_greg_collection(curve)
+            ends_to_remove_coplanar = [end]
+            if end.is_colliniar:
+                for basic_end in end.collinear_to:
+                    collinear_end = empty.greg_empty_settings.curve_ends[basic_end.name]
+                    ends_to_remove_coplanar.append(collinear_end)
+            for end in ends_to_remove_coplanar:
+                apply_hook(end)
+                remove_coplanar(end, end_name, empty, collection)
+                end.coplanar_vectors.clear()
+                add_hook(end)
+
+        return {'FINISHED'}            # Lets Blender know the operator finished successfully.
+
+def set_not_coplanar_menu_func(self, context: bpy.types.Context):
+    self.layout.operator(SetNotCoplanar.bl_idname)
+
+class SetCoplanar(bpy.types.Operator):
+    """Gregory: set coplanar"""      # Use this as a tooltip for menu items and buttons.
+    bl_idname = "object.greg_set_coplanar"        # Unique identifier for bu: bpy.types.Contextttons and menu items to reference.
+    bl_label = "Greg: set coplanar"         # Display name in the interface.
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context):
+        selected = context.selected_objects
+        curves = [obj for obj in selected if obj.greg_curve_settings.used_for_greg]
+        empties = [obj for obj in selected if obj.greg_empty_settings.used_for_greg]
+        if len(empties) != 1:
+            return False
+        if len(curves) < 2:
+            return False
+        empty = empties[0]
+        collection = get_greg_collection(empty)
+        if len(curves) + 1 != len(selected):
+            return False
+        for curve in curves:
+            if get_greg_collection(curve) != collection:
+                return False
+        connected_curves = [end.basic_end.curve for end in empty.greg_empty_settings.curve_ends]
+        for curve in curves:
+            if curve not in connected_curves:
+                return False
+        ends = get_ends_from_curves_connected_to_one_empty(curves, empty)
+        if len(curves) == 2:
+            if are_all_ends_not_coplanar(ends):
+                return False
+        if are_all_ends_not_coplanar(ends):
+            return True
+        else:
+            one_coplanar = return_one_coplanar_plane_if_exists(ends)
+            if one_coplanar is not None:
+                return True
+            else:
+                res = return_normal_to_two_coplanaras_if_exist(ends)
+                if res is not None:
+                    return True
+        return False
+
+    def execute(self, context: bpy.types.Context):
+        selected = context.selected_objects
+        curves = [obj for obj in selected if obj.greg_curve_settings.used_for_greg]
+        empty = [obj for obj in selected if obj.greg_empty_settings.used_for_greg][0]
+        ends = get_ends_from_curves_connected_to_one_empty(curves, empty)
+        collection = get_greg_collection(empty)
+        if are_all_ends_not_coplanar(ends):
+            assert len(ends) >= 3
+            make_not_coplanar_ends_coplanar(ends, empty, collection)
+        else:
+            one_coplanar = return_one_coplanar_plane_if_exists(ends)
+            if one_coplanar is not None:
+                turn_to_defined_plane(ends, empty, collection, one_coplanar)
+            else:
+                res = return_normal_to_two_coplanaras_if_exist(ends)
+                if res is not None:
+                    not_coplanar_ends, normal_to_two_coplanars = res
+                    vectors = extract_vectors_from_ends(not_coplanar_ends)
+                    turn_ends_to_be_coplanar(not_coplanar_ends, vectors, normal_to_two_coplanars)
+                    add_coplanar_arrow(ends, normal_to_two_coplanars, empty, collection)
+        return {'FINISHED'}
+    
+def return_normal_to_two_coplanaras_if_exist(ends: List[GregCurveEndItem]) -> Optional[Tuple[List[GregCurveEndItem], mathutils.Vector]]:
+    first_collinear_group = []
+    first_arrow = None
+    second_collinear_group = []
+    second_arrow = None
+    not_coplanar_ends = []
+    for end in ends:
+        if end.is_coplanar:
+            if len(end.coplanar_vectors) == 1:
+                if first_arrow is None:
+                    first_arrow = end.coplanar_vectors[0]
+                    first_collinear_group = [end]
+                elif end.coplanar_vectors[0] == first_arrow:
+                    if end.name in first_collinear_group[0].collinear_to:
+                        first_collinear_group.append(end)
+                    else:
+                        return None
+                elif second_arrow is None:
+                    second_arrow = end.coplanar_vectors[0]
+                    second_collinear_group = [end]
+                elif end.coplanar_vectors[0] == second_arrow:
+                    if end.name in second_collinear_group[0].collinear_to:
+                        second_collinear_group.append(end)
+                    else:
+                        return None
+                else:
+                    return None
+            else:
+                return None
+        else:
+            not_coplanar_ends.append(end)
+    if first_arrow is None or second_arrow is None:
+        return None
+    vec1, vec2 = extract_vectors_from_ends((first_collinear_group[0], second_collinear_group[0]))
+    normal = vec1.cross(vec2)
+    return not_coplanar_ends, normal
+
+
+
+
+def get_vector_from_arrow_obj(arrow_obj: bpy.types.Object) -> mathutils.Vector:
+    mat = arrow_obj.matrix_world.copy()
+    mat.invert()
+    return mathutils.Vector((0,0,1)) @ mat
+
+def turn_to_defined_plane(ends: List[GregCurveEndItem], empty: bpy.types.Object, collection: bpy.types.Collection, coplanar: GregArrowItem):
+    arrow_obj = coplanar.arrow
+    coplanar_vector = get_vector_from_arrow_obj(arrow_obj)
+    not_coplanar_ends = [end for end in ends if not end.is_coplanar]
+    vectors = extract_vectors_from_ends(not_coplanar_ends)
+    turn_ends_to_be_coplanar(not_coplanar_ends, vectors, coplanar_vector)
+    for end in not_coplanar_ends:
+        add_one_end_to_arrow(end, arrow_obj)
+        add_hook(end)
+
+
+def return_one_coplanar_plane_if_exists(ends: List[GregCurveEndItem]) -> Optional[GregArrowItem]:
+    coplanar = None
+    for end in ends:
+        if end.is_coplanar:
+            if len(end.coplanar_vectors) > 1:
+                return None
+            if coplanar is None:
+                coplanar = end.coplanar_vectors[0]
+            elif coplanar != end.coplanar_vectors[0]:
+                return None
+    return coplanar
+
+def set_coplanar_menu_func(self, context: bpy.types.Context):
+    self.layout.operator(SetCoplanar.bl_idname)
+
+def get_ends_from_curves_connected_to_one_empty(curves: List[bpy.types.Object],
+                                                empty: bpy.types.Object) -> List[GregCurveEndItem]:
+    end_names = (curve.greg_curve_settings.end1_name
+                 if empty == curve.greg_curve_settings.end1_empty
+                 else curve.greg_curve_settings.end2_name
+                 for curve in curves)
+    ends = [empty.greg_empty_settings.curve_ends[name] for name in end_names]
+    return ends
+
+def are_all_ends_not_coplanar(ends: List[GregCurveEndItem]) -> bool:
+    for end in ends:
+        if end.is_coplanar:
+            return False
+    return True
+
+def are_all_vectors_coplanar(vectors: List[mathutils.Vector]) -> bool:
+    assert len(vectors) >= 3
+    for i in range(len(vectors) - 2):
+        v1, v2, v3 = vectors[i: i + 3]
+        if not are_coplanar(v1, v2, v3):
+            return False
+    return True
+
+def get_normal_vector(vectors: List[mathutils.Vector]) -> mathutils.Vector:
+    xyz = np.array(vectors)
+    u, sigma, v = np.linalg.svd(xyz)
+    normal = mathutils.Vector(v[2])
+    return normal
+
+def get_normal_direction(vector: mathutils.Vector, normal: mathutils.Vector) -> mathutils.Vector:
+    return vector - vector.project(normal)
+
+def make_not_coplanar_ends_coplanar(ends: List[GregCurveEndItem],
+                                    empty: bpy.types.Object,
+                                    collection: bpy.types.Collection):
+    vectors = extract_vectors_from_ends(ends)
+    normal_vector = get_normal_vector(vectors)
+    turn_ends_to_be_coplanar(ends, vectors, normal_vector)
+    add_coplanar_arrow(ends, normal_vector, empty, collection)
+    
+def turn_ends_to_be_coplanar(ends: List[GregCurveEndItem], vectors: List[mathutils.Vector], normal_vector: mathutils.Vector):
+    changed_vectors = [get_normal_direction(vector, normal_vector) for vector in vectors]
+    for vector, end in zip(changed_vectors, ends):
+        rotate_end_to_vec(vector, end.basic_end)
+
+class SetCollinear(bpy.types.Operator):
+    """Gregory: set collinear"""      # Use this as a tooltip for menu items and buttons.
+    bl_idname = "object.greg_set_collinear"        # Unique identifier for bu: bpy.types.Contextttons and menu items to reference.
+    bl_label = "Greg: set collinear"         # Display name in the interface.
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context):
+        selected = context.selected_objects
+        if len(selected) != 2:
+            return False
+        for obj in selected:
+            if not obj.greg_curve_settings.used_for_greg:
+                return False
+        collection = get_greg_collection(selected[0])
+        if collection != get_greg_collection(selected[1]):
+            return False
+        res = get_common_empty_of_two_curves_if_exists(selected[0], selected[1])
+        if res is None:
+            return False
+        i1, i2, common_empty = res
+        return not are_two_curves_collinear(selected[0], selected[1], i1, i2, common_empty)
+
+    def execute(self, context: bpy.types.Context):
+        selected = context.selected_objects
+        curve1, curve2 = selected
+        i1, i2, common_empty = get_common_empty_of_two_curves_if_exists(curve1, curve2)
+        end_names = [extract_end_name_from_curve_and_i(curve, i) for curve, i in zip(selected, (i1, i2))]
+        ends = [extract_end_from_name_and_empty(end_name, common_empty) for end_name in end_names]
+        v1, v2 = extract_vectors_from_ends(ends)
+        new_vecs = make_collinear(v1, v2)
+        for vec, end in zip(new_vecs, ends):
+            basic_end = end.basic_end
+            rotate_end_to_vec(vec, basic_end)
+        end_groups = [[end.basic_end] + list(end.collinear_to) for end in ends]
+        for first_basic_ends, second_basic_ends in zip(end_groups, reversed(end_groups)):
+            for first_basic_end in first_basic_ends:
+                not_basic_end = extract_end_from_basic_end_and_empty(first_basic_end, common_empty)
+                for second_basic_end in second_basic_ends:
+                    added_basic_end = not_basic_end.collinear_to.add()
+                    added_basic_end.curve = second_basic_end.curve
+                    added_basic_end.end = second_basic_end.end
+                    added_basic_end.name = second_basic_end.name
+        first_end = extract_end_from_name_and_empty(end_names[0], common_empty)
+        first_vec = extract_vectors_from_ends([first_end])[0]
+        for basic_end in first_end.collinear_to:
+            vec = extract_vector_from_basic_end(basic_end)
+            new_vec = vec.project(first_vec)
+            rotate_end_to_vec(new_vec, basic_end)
+        return {'FINISHED'}
+
+def set_ends_collinear_to_one_another(end1: GregCurveEndItem, end2: GregCurveEndItem, common_empty: bpy.types.Object):
+    ends = (end1, end2)
+    end_groups = [[end.basic_end] + list(end.collinear_to) for end in ends]
+    for first_basic_ends, second_basic_ends in zip(end_groups, reversed(end_groups)):
+        for first_basic_end in first_basic_ends:
+            not_basic_end = extract_end_from_basic_end_and_empty(first_basic_end, common_empty)
+            for second_basic_end in second_basic_ends:
+                if second_basic_end.name != not_basic_end.name:
+                    if not second_basic_end.name in not_basic_end.collinear_to:
+                        added_basic_end = not_basic_end.collinear_to.add()
+                        added_basic_end.curve = second_basic_end.curve
+                        added_basic_end.end = second_basic_end.end
+                        added_basic_end.name = second_basic_end.name
+
+def set_collinear_menu_func(self, context: bpy.types.Context):
+    self.layout.operator(SetCollinear.bl_idname)
+
+class SetNotCollinear(bpy.types.Operator):
+    """Gregory: set not collinear"""      # Use this as a tooltip for menu items and buttons.
+    bl_idname = "object.greg_set_not_collinear"        # Unique identifier for bu: bpy.types.Contextttons and menu items to reference.
+    bl_label = "Greg: set not collinear"         # Display name in the interface.
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context):
+        selected = context.selected_objects
+        if len(selected) < 2:
+            return False
+        for obj in selected:
+            if not obj.greg_curve_settings.used_for_greg:
+                return False
+        collection = get_greg_collection(selected[0])
+        for obj in selected[1:]:
+            if collection != get_greg_collection(obj):
+                return False
+        res = get_common_empty_of_two_curves_if_exists(selected[0], selected[1])
+        if res is None:
+            return False
+        i1, i2, common_empty = res
+        if not are_two_curves_collinear(selected[0], selected[1], i1, i2, common_empty):
+            return False
+        for curve in selected[2:]:
+            if not verify_curve_collinear_to_given(curve, selected[0], i1, common_empty):
+                return False
+        return True
+
+    def execute(self, context: bpy.types.Context):
+        selected = context.selected_objects
+        i1, i2, common_empty = get_common_empty_of_two_curves_if_exists(selected[0], selected[1])
+        if i1 == 0:
+            end_name = selected[0].greg_curve_settings.end1_name
+        else:
+            end_name = selected[0].greg_curve_settings.end2_name
+        end = extract_end_from_name_and_empty(end_name, common_empty)
+        for basic_end in end.collinear_to:
+            print("name", basic_end.name)
+            full_end = extract_end_from_basic_end_and_empty(basic_end, common_empty)
+            full_end.collinear_to.clear()
+        end.collinear_to.clear()
+        return {'FINISHED'}
+
+def set_not_collinear_menu_func(self, context: bpy.types.Context):
+    self.layout.operator(SetNotCollinear.bl_idname)
+
+def extract_end_from_name_and_empty(name: str, empty: bpy.types.Object):
+    return empty.greg_empty_settings.curve_ends[name]
+
+def extract_end_from_basic_end_and_empty(basic_end: GregBasicEnd, empty: bpy.types.Object) -> str:
+    return extract_end_from_name_and_empty(basic_end.name, empty)
+
+def extract_end_name_from_curve_and_empty(curve: bpy.types.Object, empty: bpy.types.Object) -> Optional[str]:
+    if empty == curve.greg_curve_settings.end1_empty:
+        end_name = curve.greg_curve_settings.end1_name
+    elif empty == curve.greg_curve_settings.end2_empty:
+        end_name = curve.greg_curve_settings.end2_name
+    else:
+        return None
+    return end_name
+
+def extract_end_name_from_curve_and_i(curve: bpy.types.Object, i: int):
+    if i == 0:
+        end_name = curve.greg_curve_settings.end1_name
+    elif i == 1:
+        end_name = curve.greg_curve_settings.end2_name
+    else:
+        raise Exception("I must be 0 or 1!")
+    return end_name
+
+def verify_curve_collinear_to_given(curve: bpy.types.Object,
+                                    given: bpy.types.Object,
+                                    i_given: int,
+                                    common_empty: bpy.types.Object):
+    end1_name = extract_end_name_from_curve_and_i(given, i_given)
+    end1 = common_empty.greg_empty_settings.curve_ends[end1_name]
+    end2_name = extract_end_name_from_curve_and_empty(curve, common_empty)
+    if end2_name is None:
+        return False
+    return end2_name in end1.collinear_to
+    
+
+def get_common_empty_of_two_curves_if_exists(curve_obj1: bpy.types.Object,
+                                             curve_obj2: bpy.types.Object) -> Optional[Tuple[int, int, bpy.types.Object]]:
+    empty1_1 = curve_obj1.greg_curve_settings.end1_empty
+    empty1_2 = curve_obj1.greg_curve_settings.end2_empty
+    empty2_1 = curve_obj2.greg_curve_settings.end1_empty
+    empty2_2 = curve_obj2.greg_curve_settings.end2_empty
+    if empty1_1 == empty2_1:
+        return 0, 0, empty1_1
+    if empty1_1 == empty2_2:
+        return 0, 1, empty1_1
+    if empty1_2 == empty2_1:
+        return 1, 0, empty1_2
+    if empty1_2 == empty2_2:
+        return 1, 1, empty1_2
+    return None
+
+def are_two_curves_collinear(curve_obj1: bpy.types.Object,
+                             curve_obj2: bpy.types.Object,
+                             i1: int,
+                             i2: int,
+                             common_empty: bpy.types.Object) -> bool:
+    if i1 == 0:
+        end1_name = curve_obj1.greg_curve_settings.end1_name
+    else:
+        end1_name = curve_obj1.greg_curve_settings.end2_name
+    if i2 == 0:
+        end2_name = curve_obj2.greg_curve_settings.end1_name
+    else:
+        end2_name = curve_obj2.greg_curve_settings.end2_name
+    end1 = common_empty.greg_empty_settings.curve_ends[end1_name]
+    return end2_name in end1.collinear_to
+    
+
+
+
 addon_keymaps = []
 
 def register():
@@ -4303,13 +5042,14 @@ def register():
     bpy.types.Object.greg_shear2 = bpy.props.FloatProperty(name="shear side 2", default=0, update = cb_update)
     bpy.types.Object.greg_tilt2 = bpy.props.FloatProperty(name="tilt side 2", default=0, update = cb_update)
     bpy.types.Object.greg_is_sharp = bpy.props.BoolProperty(default=False)
+    bpy.types.Collection.greg_is_not_face = bpy.props.BoolProperty(default=False)
 
     bpy.utils.register_class(CreateCurvesCollection)
     bpy.types.VIEW3D_MT_object.append(add_collection_menu_func)
     bpy.utils.register_class(CreateSurfacesBetweenCurves)
     bpy.types.VIEW3D_MT_object.append(add_surface_menu_func)  # Adds the new operator to an existing menu.
-    #bpy.utils.register_class(SetNotFace)
-    #bpy.types.VIEW3D_MT_object_context_menu.append(set_not_face_menu_func)  # Adds the new operator to an existing menu.
+    bpy.utils.register_class(SetNotFace)
+    bpy.types.VIEW3D_MT_object_context_menu.append(set_not_face_menu_func)  # Adds the new operator to an existing menu.
     bpy.utils.register_class(PrintItemInfo)
     bpy.types.VIEW3D_MT_object_context_menu.append(add_print_info_func)
     bpy.utils.register_class(MakeCurveMirrorBridge)
@@ -4325,12 +5065,27 @@ def register():
     bpy.types.VIEW3D_MT_object_context_menu.append(add_greg_subdivide_func)
     bpy.utils.register_class(GregExtrude)
     bpy.types.VIEW3D_MT_object_context_menu.append(add_greg_extrude_func)
+    bpy.utils.register_class(GregMergeAtCenter)
+    bpy.utils.register_class(GregMergeAtFirst)
+    bpy.utils.register_class(GregMergeAtLast)
+    bpy.utils.register_class(GregMergeSub)
+    bpy.types.VIEW3D_MT_object_context_menu.append(add_greg_merge_func)
+    bpy.utils.register_class(AddBezierCurve)
+    bpy.types.VIEW3D_MT_object_context_menu.append(add_bezier_curve_menu_func)
+    bpy.utils.register_class(SetCoplanar)
+    bpy.types.VIEW3D_MT_object_context_menu.append(set_coplanar_menu_func)
+    bpy.utils.register_class(SetNotCoplanar)
+    bpy.types.VIEW3D_MT_object_context_menu.append(set_not_coplanar_menu_func)
+    bpy.utils.register_class(SetCollinear)
+    bpy.types.VIEW3D_MT_object_context_menu.append(set_collinear_menu_func)
+    bpy.utils.register_class(SetNotCollinear)
+    bpy.types.VIEW3D_MT_object_context_menu.append(set_not_collinear_menu_func)
 
     wm = bpy.context.window_manager
     kc = wm.keyconfigs.addon
     if kc:
         km = wm.keyconfigs.addon.keymaps.new(name='3D View', space_type='VIEW_3D')
-        kmi = km.keymap_items.new(GregExtrude.bl_idname, type='E', value='PRESS', ctrl=True)
+        kmi = km.keymap_items.new(GregExtrude.bl_idname, type='E', value='PRESS', ctrl=False)
         addon_keymaps.append((km, kmi))
 
     bpy.app.handlers.depsgraph_update_post.append(on_depsgraph_update)
@@ -4341,7 +5096,16 @@ def unregister():
     for km, kmi in addon_keymaps:
         km.keymap_items.remove(kmi)
     addon_keymaps.clear()
-
+    
+    bpy.utils.unregister_class(SetCollinear)
+    bpy.utils.unregister_class(SetNotCollinear)
+    bpy.utils.unregister_class(SetCoplanar)
+    bpy.utils.unregister_class(SetNotCoplanar)
+    bpy.utils.unregister_class(AddBezierCurve)
+    bpy.utils.unregister_class(GregMergeSub)
+    bpy.utils.unregister_class(GregMergeAtLast)
+    bpy.utils.unregister_class(GregMergeAtFirst)
+    bpy.utils.unregister_class(GregMergeAtCenter)
     bpy.utils.unregister_class(GregExtrude)
     bpy.utils.unregister_class(GregSubdivide)
     bpy.utils.unregister_class(OBJECT_PT_greg_curve_properties2)
@@ -4351,7 +5115,7 @@ def unregister():
     bpy.utils.unregister_class(UnsetCurveMirrorBridge)
     bpy.utils.unregister_class(MakeCurveMirrorBridge)
     bpy.utils.unregister_class(PrintItemInfo)
-    #bpy.utils.unregister_class(SetNotFace)
+    bpy.utils.unregister_class(SetNotFace)
     bpy.utils.unregister_class(CreateSurfacesBetweenCurves)
 
     bpy.utils.unregister_class(GregCurve)
@@ -4374,4 +5138,3 @@ def unregister():
 # to test the add-on without having to install it.
 if __name__ == "__main__":
     register()
-
