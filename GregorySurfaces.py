@@ -3848,7 +3848,6 @@ def coplanar_collinear_add_one_end(empty_obj, collection, new_end):
     
     for end1 in empty_obj.greg_empty_settings.curve_ends:
         if end1 != new_end:
-            print("here")
             check_ends_collinear(end1, new_end)
     collinear_groups = []
     used_dict = {end.name: False for end in empty_obj.greg_empty_settings.curve_ends}
@@ -4098,25 +4097,22 @@ class GregExtrude(bpy.types.Operator):
                 i = 1
             end = empty.greg_empty_settings.curve_ends[end_name]
             handle_left, handle_right = apply_hook_and_get_handles_from_end(end, curve, i, co)
-            add_curve_by_extrude(empty, co, handle_left, handle_right, collection, context)
         elif len(candidates) == 0:
             num_ends = len(empty.greg_empty_settings.curve_ends)
             if num_ends == 0:
                 handle_left = mathutils.Vector((1, 0, 0))
                 handle_right = mathutils.Vector((-1, 0, 0))
-                add_curve_by_extrude(empty, co, handle_left, handle_right, collection, context)
             elif num_ends == 1:
                 end = empty.greg_empty_settings.curve_ends[0]
                 curve = end.basic_end.curve
                 i = end.basic_end.end
                 handle_left, handle_right = apply_hook_and_get_handles_from_end(end, curve, i, co)
-                add_curve_by_extrude(empty, co, handle_left, handle_right, collection, context)
             else:
                 for end in empty.greg_empty_settings.curve_ends:
                     apply_hook(end)
-            vecs = extract_vectors_from_ends(empty.greg_empty_settings.curve_ends)
-            handle_left, handle_right = get_handles_from_vecs_to_extrude(vecs)
-            add_curve_by_extrude(empty, co, handle_left, handle_right, collection, context)
+                vecs = extract_vectors_from_ends(empty.greg_empty_settings.curve_ends)
+                handle_left, handle_right = get_handles_from_vecs_to_extrude(vecs)
+        add_curve_by_extrude(empty, co, handle_left, handle_right, collection, context)
         return {'FINISHED'}    
 
 def add_greg_extrude_func(self, context: bpy.types.Context):
