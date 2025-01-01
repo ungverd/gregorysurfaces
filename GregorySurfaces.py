@@ -3842,6 +3842,26 @@ class GlobalForSubdivide:
             for end in empty_obj.greg_empty_settings.curve_ends:
                 add_hook(end, context)
 
+    def adjust_free_outers(self):
+        for x in range(1, self.xtot - 1):
+            midpoint1 = self.points_grid[0][x]
+            handle_up = midpoint1.handle_up
+            handle_down = midpoint1.handle_down
+            midpoint1.handle_up = -handle_down * handle_up.length / handle_down.length
+            midpoint2 = self.points_grid[self.ytot - 1][x]
+            handle_up = midpoint2.handle_up
+            handle_down = midpoint2.handle_down
+            midpoint2.handle_down = -handle_up * handle_down.length / handle_up.length
+        for y in range(1, self.ytot - 1):
+            midpoint1 = self.points_grid[y][0]
+            handle_left = midpoint1.handle_left
+            handle_right = midpoint1.handle_right
+            midpoint1.handle_left = -handle_right * handle_left.length / handle_right.length
+            midpoint2 = self.points_grid[y][self.xtot - 1]
+            handle_left = midpoint2.handle_left
+            handle_right = midpoint2.handle_right
+            midpoint2.handle_right = -handle_left * handle_right.length / handle_left.length
+
 def coplanar_collinear_add_one_end(empty_obj, collection, new_end):
     for end in empty_obj.greg_empty_settings.curve_ends:
         apply_hook(end)
@@ -4041,6 +4061,7 @@ class GregSubdivide(bpy.types.Operator):
                 apply_hook(end)
                 add_hook(end)
         g_list.subdivide()
+        g_list.adjust_free_outers()
         g_list.add_real_curves(collection, context)
         return {'FINISHED'}    
 
@@ -4847,13 +4868,15 @@ class SetCollinear(bpy.types.Operator):
         selected = context.selected_objects
         curve1, curve2 = selected
         i1, i2, common_empty = get_common_empty_of_two_curves_if_exists(curve1, curve2)
-        end_names = [extract_end_name_from_curve_and_i(curve, i) for curve, i in zip(selected, (i1, i2))]
+        i_s = (i1, i2)
+        end_names = [extract_end_name_from_curve_and_i(curve, i) for curve, i in zip(selected, i_s)]
         ends = [extract_end_from_name_and_empty(end_name, common_empty) for end_name in end_names]
         v1, v2 = extract_vectors_from_ends(ends)
         new_vecs = make_collinear(v1, v2)
         for vec, end in zip(new_vecs, ends):
             basic_end = end.basic_end
             rotate_end_to_vec(vec, basic_end)
+            harmonize_ends(ends, i_s, common_empty)
         end_groups = [[end.basic_end] + list(end.collinear_to) for end in ends]
         for first_basic_ends, second_basic_ends in zip(end_groups, reversed(end_groups)):
             for first_basic_end in first_basic_ends:
@@ -4870,6 +4893,21 @@ class SetCollinear(bpy.types.Operator):
             new_vec = vec.project(first_vec)
             rotate_end_to_vec(new_vec, basic_end)
         return {'FINISHED'}
+
+def harmonize_ends(ends: List[GregCurveEndItem],
+                   i_s: Tuple[int, int],
+                   common_empty: bpy.types.Object):
+    # len(ends) must be 2
+    vecs = extract_vectors_from_ends(ends)
+    bezier_points = [end.basic_end.curve.data.splines[0].bezier_points[i] for end, i in zip(ends, i_s)]
+    co = common_empty.matrix_world.translation
+    for i, bezier_point, vec in zip(i_s, bezier_points, reversed(vecs)):
+        if i == 0:
+            bezier_point.handle_left = co + vec
+        else:
+            bezier_point.handle_right = co + vec
+        bezier_point.handle_right_type == "ALIGNED"
+        bezier_point.handle_left_type == "ALIGNED"
 
 def set_ends_collinear_to_one_another(end1: GregCurveEndItem, end2: GregCurveEndItem, common_empty: bpy.types.Object):
     ends = (end1, end2)
