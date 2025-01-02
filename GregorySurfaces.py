@@ -38,6 +38,7 @@ TH2 = TH**2
 
 mode = [None]
 
+@bpy.app.handlers.persistent
 def on_depsgraph_update(scene):
     level = len(getouterframes(currentframe()))
     if level < 2:
@@ -3843,24 +3844,41 @@ class GlobalForSubdivide:
                 add_hook(end, context)
 
     def adjust_free_outers(self):
-        for x in range(1, self.xtot - 1):
-            midpoint1 = self.points_grid[0][x]
-            handle_up = midpoint1.handle_up
-            handle_down = midpoint1.handle_down
-            midpoint1.handle_up = -handle_down * handle_up.length / handle_down.length
-            midpoint2 = self.points_grid[self.ytot - 1][x]
-            handle_up = midpoint2.handle_up
-            handle_down = midpoint2.handle_down
-            midpoint2.handle_down = -handle_up * handle_down.length / handle_up.length
-        for y in range(1, self.ytot - 1):
-            midpoint1 = self.points_grid[y][0]
-            handle_left = midpoint1.handle_left
-            handle_right = midpoint1.handle_right
-            midpoint1.handle_left = -handle_right * handle_left.length / handle_right.length
-            midpoint2 = self.points_grid[y][self.xtot - 1]
-            handle_left = midpoint2.handle_left
-            handle_right = midpoint2.handle_right
-            midpoint2.handle_right = -handle_left * handle_right.length / handle_left.length
+        point0 = self.points_grid[0][0]
+        point1 = self.points_grid[0][self.xtot - 1]
+        if are_collinear(point0.handle_up, point0.handle_down) and are_collinear(point1.handle_up, point1.handle_down):
+            for x in range(1, self.xtot - 1):
+                midpoint1 = self.points_grid[0][x]
+                handle_up = midpoint1.handle_up
+                handle_down = midpoint1.handle_down
+
+                midpoint1.handle_up = -handle_down * handle_up.length / handle_down.length
+        point0 = self.points_grid[self.ytot - 1][0]
+        point1 = self.points_grid[self.ytot - 1][self.xtot - 1]
+        if are_collinear(point0.handle_up, point0.handle_down) and are_collinear(point1.handle_up, point1.handle_down):
+            for x in range(1, self.xtot - 1):
+                midpoint2 = self.points_grid[self.ytot - 1][x]
+                handle_up = midpoint2.handle_up
+                handle_down = midpoint2.handle_down
+                midpoint2.handle_down = -handle_up * handle_down.length / handle_up.length
+
+        point0 = self.points_grid[0][0]
+        point1 = self.points_grid[self.ytot - 1][0]
+        if are_collinear(point0.handle_left, point0.handle_right) and are_collinear(point1.handle_left, point1.handle_right):
+            for y in range(1, self.ytot - 1):
+                midpoint1 = self.points_grid[y][0]
+                handle_left = midpoint1.handle_left
+                handle_right = midpoint1.handle_right
+                midpoint1.handle_left = -handle_right * handle_left.length / handle_right.length
+        
+        point0 = self.points_grid[0][self.xtot - 1]
+        point1 = self.points_grid[self.ytot - 1][self.xtot - 1]
+        if are_collinear(point0.handle_left, point0.handle_right) and are_collinear(point1.handle_left, point1.handle_right):
+            for y in range(1, self.ytot - 1):
+                midpoint2 = self.points_grid[y][self.xtot - 1]
+                handle_left = midpoint2.handle_left
+                handle_right = midpoint2.handle_right
+                midpoint2.handle_right = -handle_left * handle_right.length / handle_left.length
 
 def coplanar_collinear_add_one_end(empty_obj, collection, new_end):
     for end in empty_obj.greg_empty_settings.curve_ends:
@@ -5130,6 +5148,8 @@ def unregister():
     for km, kmi in addon_keymaps:
         km.keymap_items.remove(kmi)
     addon_keymaps.clear()
+
+    bpy.app.handlers.depsgraph_update_post.remove(on_depsgraph_update)
     
     bpy.utils.unregister_class(SetCollinear)
     bpy.utils.unregister_class(SetNotCollinear)
@@ -5151,6 +5171,22 @@ def unregister():
     bpy.utils.unregister_class(PrintItemInfo)
     bpy.utils.unregister_class(SetNotFace)
     bpy.utils.unregister_class(CreateSurfacesBetweenCurves)
+
+    del bpy.types.Collection.greg_settings
+    del bpy.types.Object.greg_empty_settings
+    del bpy.types.Object.greg_curve_settings
+    del bpy.types.Object.greg_arrow_settings
+    del bpy.types.Object.greg_bulge
+    del bpy.types.Object.greg_shear
+    del bpy.types.Object.greg_tilt
+    del bpy.types.Object.greg_bulge1
+    del bpy.types.Object.greg_shear1
+    del bpy.types.Object.greg_tilt1
+    del bpy.types.Object.greg_bulge2
+    del bpy.types.Object.greg_shear2
+    del bpy.types.Object.greg_tilt2
+    del bpy.types.Object.greg_is_sharp
+    del bpy.types.Collection.greg_is_not_face
 
     bpy.utils.unregister_class(GregCurve)
     bpy.utils.unregister_class(GregEmpty)
