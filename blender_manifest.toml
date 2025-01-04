@@ -3,7 +3,7 @@ schema_version = "0.1.1"
 id = "gregory_surfaces"
 version = "1.0.0"
 name = "Gregory Surfaces"
-tagline = "This extension builds a smooth surface from bezier curves scaffold"
+tagline = "This extension builds smooth surface from bezier curves scaffold"
 maintainer = "Vetta-vetka katerina.moskovkina@yahoo.com"
 type = "add-on"
 
