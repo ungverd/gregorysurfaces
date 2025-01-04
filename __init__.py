@@ -3449,20 +3449,26 @@ class GlobalForSubdivide:
                                                         j += 1
         return cross_hs
     
-    @staticmethod
-    def adjust_cross_handles_lengths(border: List["CurveForSubdivide"],
+    def adjust_cross_handles_lengths(self,
+                                     i: int, #must be 0, 1, 2, or 3 
+                                     border: List["CurveForSubdivide"],
                                      handles: List[Optional[mathutils.Vector]]):
+        edge_points = self.edge_points[i]
+        other_edge_points = self.edge_points[(i + 2) % 4]
         curves_lengths = [curve.get_approx_length() for curve in border]
         total_length = sum(curves_lengths)
-        handle0_length = handles[0].length
-        handle1_length = handles[-1].length
+        corner_handles_lengths = [handles[ind].length for ind in (0, -1)]
+        corner_edges_lengths = [(edge_points[ind].co - other_edge_points[ind].co).length for ind in (0, -1)]
+        handles_adjusted_lengths = [handle_len / edge_len for handle_len, edge_len in zip(corner_handles_lengths, corner_edges_lengths)]
         this_length = 0
         for curve_length, i in zip(curves_lengths[:-1], range(1, len(handles)-1)):
             this_length += curve_length
             handle = handles[i]
             if handle is not None:
                 mixing_factor = this_length / total_length
-                this_handle_length = handle1_length * mixing_factor + handle0_length * (1 - mixing_factor)
+                this_edge_len = (edge_points[i].co - other_edge_points[i].co).length
+                this_handle_length = (handles_adjusted_lengths[1] * mixing_factor +
+                                      handles_adjusted_lengths[0] * (1 - mixing_factor)) * this_edge_len
                 handles[i] = handle.normalized() * this_handle_length
 
     
@@ -3483,8 +3489,8 @@ class GlobalForSubdivide:
         self.fill_handles()
         borders = (self.border0, self.border1, self.border2, self.border3)
         cross_hs_candidates = [self.extract_handles(i) for i in range(4)]
-        for cross_hs_candidate, border in zip(cross_hs_candidates, borders):
-            GlobalForSubdivide.adjust_cross_handles_lengths(border, cross_hs_candidate)
+        for i, (cross_hs_candidate, border) in enumerate(zip(cross_hs_candidates, borders)):
+            self.adjust_cross_handles_lengths(i, border, cross_hs_candidate)
         cross_hs = [GlobalForSubdivide.populate_handles(border, cross_hs_candidates[i]) for i, border in enumerate(borders)]
         cross_hs = self.adjust_if_border_on_mirror(cross_hs)
         outer_hs = [GlobalForSubdivide.populate_handles(border, self.extract_handles(i, True)) for i, border in enumerate(borders)]
@@ -5213,22 +5219,26 @@ def are_two_curves_collinear(curve_obj1: bpy.types.Object,
 
 addon_keymaps = []
 
-def register():
-    bpy.utils.register_class(GregId)
-    bpy.utils.register_class(GregArrowItem)
-    bpy.utils.register_class(GregBasicEnd)
-    bpy.utils.register_class(GregArrow)
-    bpy.utils.register_class(GregCurveEndItem)
-    bpy.utils.register_class(GregEmptyItem)
-    bpy.utils.register_class(GregCurveItem)
-    bpy.utils.register_class(GregQuad)
-    bpy.utils.register_class(GregPhantomCurveEnd)
-    bpy.utils.register_class(GregPhantomCurve)
-    bpy.utils.register_class(GregPhantomBpoint)
-    bpy.utils.register_class(GregCollectionSettings)
-    bpy.utils.register_class(GregEmpty)
-    bpy.utils.register_class(GregCurve)
+classes = (GregId, GregArrowItem, GregBasicEnd, GregArrow, GregCurveEndItem, GregEmptyItem, GregCurveItem, GregQuad,
+           GregPhantomCurveEnd, GregPhantomCurve, GregPhantomBpoint, GregCollectionSettings, GregEmpty ,GregCurve,
+           CreateCurvesCollection, CreateSurfacesBetweenCurves, SetNotFace, PrintItemInfo, MakeCurveMirrorBridge,
+           UnsetCurveMirrorBridge, PrintDotInfo, OBJECT_PT_greg_curve_properties, OBJECT_PT_greg_curve_properties1,
+           OBJECT_PT_greg_curve_properties2, GregSubdivide, GregExtrude, GregMergeAtCenter, GregMergeAtFirst,
+           GregMergeAtLast, GregMergeSub, AddBezierCurve, SetCoplanar, SetNotCoplanar, SetCollinear, SetNotCollinear)
 
+functions_context_menu = (add_collection_menu_func, add_surface_menu_func, set_not_face_menu_func,
+                          add_print_info_func, add_bridge_mirror_func, add_unset_bridge_mirror_func,
+                          add_print_dot_func, add_greg_subdivide_func, add_greg_extrude_func, add_greg_merge_func,
+                          add_bezier_curve_menu_func, set_coplanar_menu_func, set_not_coplanar_menu_func,
+                          set_collinear_menu_func, set_not_collinear_menu_func)
+
+def register():
+    for my_class in classes:
+        bpy.utils.register_class(my_class)
+
+    for menu_func in functions_context_menu:
+        bpy.types.VIEW3D_MT_object_context_menu.append(menu_func)
+    
     bpy.types.Collection.greg_settings = bpy.props.PointerProperty(type=GregCollectionSettings)
     bpy.types.Object.greg_empty_settings = bpy.props.PointerProperty(type=GregEmpty)
     bpy.types.Object.greg_curve_settings = bpy.props.PointerProperty(type=GregCurve)
@@ -5244,43 +5254,6 @@ def register():
     bpy.types.Object.greg_tilt2 = bpy.props.FloatProperty(name="tilt side 2", default=0, update = cb_update)
     bpy.types.Object.greg_is_sharp = bpy.props.BoolProperty(default=False)
     bpy.types.Collection.greg_is_not_face = bpy.props.BoolProperty(default=False)
-
-    bpy.utils.register_class(CreateCurvesCollection)
-    bpy.types.VIEW3D_MT_object.append(add_collection_menu_func)
-    bpy.utils.register_class(CreateSurfacesBetweenCurves)
-    bpy.types.VIEW3D_MT_object.append(add_surface_menu_func)  # Adds the new operator to an existing menu.
-    bpy.utils.register_class(SetNotFace)
-    bpy.types.VIEW3D_MT_object_context_menu.append(set_not_face_menu_func)  # Adds the new operator to an existing menu.
-    bpy.utils.register_class(PrintItemInfo)
-    bpy.types.VIEW3D_MT_object_context_menu.append(add_print_info_func)
-    bpy.utils.register_class(MakeCurveMirrorBridge)
-    bpy.types.VIEW3D_MT_object_context_menu.append(add_bridge_mirror_func)
-    bpy.utils.register_class(UnsetCurveMirrorBridge)
-    bpy.types.VIEW3D_MT_object_context_menu.append(add_unset_bridge_mirror_func)
-    bpy.utils.register_class(PrintDotInfo)
-    bpy.types.VIEW3D_MT_object_context_menu.append(add_print_dot_func)
-    bpy.utils.register_class(OBJECT_PT_greg_curve_properties)
-    bpy.utils.register_class(OBJECT_PT_greg_curve_properties1)
-    bpy.utils.register_class(OBJECT_PT_greg_curve_properties2)
-    bpy.utils.register_class(GregSubdivide)
-    bpy.types.VIEW3D_MT_object_context_menu.append(add_greg_subdivide_func)
-    bpy.utils.register_class(GregExtrude)
-    bpy.types.VIEW3D_MT_object_context_menu.append(add_greg_extrude_func)
-    bpy.utils.register_class(GregMergeAtCenter)
-    bpy.utils.register_class(GregMergeAtFirst)
-    bpy.utils.register_class(GregMergeAtLast)
-    bpy.utils.register_class(GregMergeSub)
-    bpy.types.VIEW3D_MT_object_context_menu.append(add_greg_merge_func)
-    bpy.utils.register_class(AddBezierCurve)
-    bpy.types.VIEW3D_MT_object_context_menu.append(add_bezier_curve_menu_func)
-    bpy.utils.register_class(SetCoplanar)
-    bpy.types.VIEW3D_MT_object_context_menu.append(set_coplanar_menu_func)
-    bpy.utils.register_class(SetNotCoplanar)
-    bpy.types.VIEW3D_MT_object_context_menu.append(set_not_coplanar_menu_func)
-    bpy.utils.register_class(SetCollinear)
-    bpy.types.VIEW3D_MT_object_context_menu.append(set_collinear_menu_func)
-    bpy.utils.register_class(SetNotCollinear)
-    bpy.types.VIEW3D_MT_object_context_menu.append(set_not_collinear_menu_func)
 
     wm = bpy.context.window_manager
     kc = wm.keyconfigs.addon
@@ -5299,27 +5272,6 @@ def unregister():
     addon_keymaps.clear()
 
     bpy.app.handlers.depsgraph_update_post.remove(on_depsgraph_update)
-    
-    bpy.utils.unregister_class(SetCollinear)
-    bpy.utils.unregister_class(SetNotCollinear)
-    bpy.utils.unregister_class(SetCoplanar)
-    bpy.utils.unregister_class(SetNotCoplanar)
-    bpy.utils.unregister_class(AddBezierCurve)
-    bpy.utils.unregister_class(GregMergeSub)
-    bpy.utils.unregister_class(GregMergeAtLast)
-    bpy.utils.unregister_class(GregMergeAtFirst)
-    bpy.utils.unregister_class(GregMergeAtCenter)
-    bpy.utils.unregister_class(GregExtrude)
-    bpy.utils.unregister_class(GregSubdivide)
-    bpy.utils.unregister_class(OBJECT_PT_greg_curve_properties2)
-    bpy.utils.unregister_class(OBJECT_PT_greg_curve_properties1)
-    bpy.utils.unregister_class(OBJECT_PT_greg_curve_properties)
-    bpy.utils.unregister_class(PrintDotInfo)
-    bpy.utils.unregister_class(UnsetCurveMirrorBridge)
-    bpy.utils.unregister_class(MakeCurveMirrorBridge)
-    bpy.utils.unregister_class(PrintItemInfo)
-    bpy.utils.unregister_class(SetNotFace)
-    bpy.utils.unregister_class(CreateSurfacesBetweenCurves)
 
     del bpy.types.Collection.greg_settings
     del bpy.types.Object.greg_empty_settings
@@ -5337,20 +5289,11 @@ def unregister():
     del bpy.types.Object.greg_is_sharp
     del bpy.types.Collection.greg_is_not_face
 
-    bpy.utils.unregister_class(GregCurve)
-    bpy.utils.unregister_class(GregEmpty)
-    bpy.utils.unregister_class(GregCollectionSettings)
-    bpy.utils.unregister_class(GregPhantomBpoint)
-    bpy.utils.unregister_class(GregPhantomCurve)
-    bpy.utils.unregister_class(GregPhantomCurveEnd)
-    bpy.utils.unregister_class(GregQuad)
-    bpy.utils.unregister_class(GregCurveItem)
-    bpy.utils.unregister_class(GregEmptyItem)
-    bpy.utils.unregister_class(GregCurveEndItem)
-    bpy.utils.unregister_class(GregArrow)
-    bpy.utils.unregister_class(GregBasicEnd)
-    bpy.utils.unregister_class(GregArrowItem)
-    bpy.utils.unregister_class(GregId)
+    for menu_func in functions_context_menu:
+        bpy.types.VIEW3D_MT_object_context_menu.remove(menu_func)
+
+    for my_class in reversed(classes):
+        bpy.utils.unregister_class(my_class)
 
 
 # This allows you to run the script directly from Blender's Text editor
