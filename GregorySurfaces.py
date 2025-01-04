@@ -867,10 +867,10 @@ def grid_fill(verts1: List[mathutils.Vector],
             v_grid[(y * xtot) + x] = co
     return v_grid
 
-def are_coplanar(v1: mathutils.Vector, v2: mathutils.Vector, v3: mathutils.Vector):
+def are_coplanar(v1: mathutils.Vector, v2: mathutils.Vector, v3: mathutils.Vector) -> bool:
     return abs(mathutils.Matrix((v1.normalized(), v2.normalized(), v3.normalized())).determinant()) < TH
 
-def are_collinear(v1: mathutils.Vector, v2: mathutils.Vector):
+def are_collinear(v1: mathutils.Vector, v2: mathutils.Vector) -> bool:
     return (v1.normalized().cross(v2.normalized())).length < TH
 
 #*******************************************************************************************
@@ -1402,10 +1402,11 @@ def get_coplanar_groups_num(arrow: bpy.types.Object):
                     added[obn] = True
     return counter
 
-def get_greg_collection(obj):
+def get_greg_collection(obj: bpy.types.Object) -> Optional[bpy.types.Collection]:
     for collection in obj.users_collection:
         if collection.greg_settings.used_for_greg:
             return collection
+    return None
 
 def remove_coplanar(end: "GregCurveEndItem", end_name: str, empty: bpy.types.Object, collection: bpy.types.Collection):
     for arrow_item in end.coplanar_vectors:
@@ -2859,7 +2860,7 @@ class GlobalForSubdivide:
         return res
 
     
-    def add_curve_and_mirrors(self, curve_obj):
+    def add_curve_and_mirrors(self, curve_obj: bpy.types.Object):
         empties = (curve_obj.greg_curve_settings.end1_empty, curve_obj.greg_curve_settings.end2_empty)
         co_s = [empty.matrix_world.translation for empty in empties]
         triangles_s = [[GlobalForSubdivide.get_triangle_from_empty(empty)] for empty in empties]
@@ -2952,6 +2953,9 @@ class GlobalForSubdivide:
         if not_mirrored_max != len([curve for curve in self.curves.values() if not curve.is_mirrored]):
             print(5)
             return False
+        return optimal_quad
+
+    def add_optimal_quad(self, optimal_quad: List[int]):
         self.optimal_quad = optimal_quad
         self.border0 = self.borders[self.optimal_quad[0]][self.optimal_quad[1]][1]
         self.border1 = self.borders[self.optimal_quad[1]][self.optimal_quad[2]][1]
@@ -2961,8 +2965,6 @@ class GlobalForSubdivide:
                             self.borders[self.optimal_quad[1]][self.optimal_quad[2]][2],
                             self.borders[self.optimal_quad[3]][self.optimal_quad[2]][2],
                             self.borders[self.optimal_quad[0]][self.optimal_quad[3]][2]]
-        return True
-
 
 
     @staticmethod
@@ -3029,7 +3031,7 @@ class GlobalForSubdivide:
         return vec
     
     @staticmethod
-    def get_handle_other_and_outer(point, curve_prev, curve_post):
+    def get_handle_other_and_outer(point: "PointForSubdivide", curve_prev: "CurveForSubdivide", curve_post: "CurveForSubdivide"):
         prev_other_i = None
         post_other_i = None
         bridge_mirror_vec_prev = None
@@ -3134,7 +3136,8 @@ class GlobalForSubdivide:
                 point.handle_other, point.handle_outer = GlobalForSubdivide.get_handle_other_and_outer(point, curve_prev, curve_post)
 
     @staticmethod
-    def populate_handles(handles):
+    def populate_handles(border: List["CurveForSubdivide"],
+                         handles: List[Optional[mathutils.Vector]]) -> List[mathutils.Vector]:
         i = 0
         count = 1
         while i < (len(handles) - 1):
@@ -3144,13 +3147,18 @@ class GlobalForSubdivide:
             while p2 is None:
                 count += 1
                 p2 = handles[i + count]
-            for j in range(i + 1, i + count):
-                factor = j / count
+            curves = border[i:i + count]
+            curves_lengths = [curve.get_approx_length() for curve in curves]
+            total_length = sum(curves_lengths)
+            now_length = 0
+            for j, curve_length in zip(range(i + 1, i + count), curves_lengths[:-1]):
+                now_length += curve_length
+                factor = now_length / total_length
                 handles[j] = p1.lerp(p2, factor)
             i += count
         return handles
     
-    def extract_coords(self, i):
+    def extract_coords(self, i: int):
         return [p.co for p in self.edge_points[i]]
     
     def extract_xtot_ytot(self):
@@ -3193,7 +3201,7 @@ class GlobalForSubdivide:
                 handles[j] = point.handle_other
         return handles
     
-    def get_handles_right_left(self, i, right):
+    def get_handles_right_left(self, i: int, right: bool):
         if right:
             if i == 0:
                 first = self.corner_handles[3][0]
@@ -3452,9 +3460,10 @@ class GlobalForSubdivide:
         self.symmetrize()
         self.extract_corner_handles()
         self.fill_handles()
-        cross_hs = [GlobalForSubdivide.populate_handles(self.extract_handles(i)) for i in range(4)]
+        borders = (self.border0, self.border1, self.border2, self.border3)
+        cross_hs = [GlobalForSubdivide.populate_handles(border, self.extract_handles(i)) for i, border in enumerate(borders)]
         cross_hs = self.adjust_if_border_on_mirror(cross_hs)
-        outer_hs = [GlobalForSubdivide.populate_handles(self.extract_handles(i, True)) for i in range(4)]
+        outer_hs = [GlobalForSubdivide.populate_handles(border, self.extract_handles(i, True)) for i, border in enumerate(borders)]
         cross_h1 = cross_hs[0]
         cross_h2 = cross_hs[2]
         cross_vh1 = cross_hs[3]
@@ -3843,42 +3852,134 @@ class GlobalForSubdivide:
             for end in empty_obj.greg_empty_settings.curve_ends:
                 add_hook(end, context)
 
+    def is_collinear(self, corner: int, is_horizontal: bool) -> bool:
+        # corner must be 0, 1, 2, or 3
+        corner_point_num = self.optimal_quad[corner]
+        corner_point = self.points[corner_point_num]
+        other_corner = (corner + 1) % 4 if (is_horizontal and (corner % 2 == 0) or 
+                                            ((not is_horizontal) and (corner % 2 == 1))) else (corner - 1) % 4
+        # if horizontal: 0->1, 1->0, 2->3, 3->2
+        # if vertical: 0->3, 3->0, 1->2, 2->1
+        border = self.extract_border_from_two_corner_nums(corner, other_corner)
+        curve = border[1][0]
+        if curve.points[0] == corner_point:
+            end = 0
+        elif curve.points[1] == corner_point:
+            end = 1
+        else:
+            raise Exception("Curve is not connected to the point!")
+        end_name = extract_end_name_from_curve_and_i(curve.original_curve, end)
+        end: GregCurveEndItem = corner_point.empty.greg_empty_settings.curve_ends[end_name]
+        return end.is_collinear
+    
+    def extract_border_from_two_corner_nums(self, corner1: int, corner2: int):
+        # corners must be 0, 1, 2, or 3
+        point_nums = [self.optimal_quad[corner] for corner in (corner1, corner2)]
+        return self.borders[point_nums[0]][point_nums[1]]
+    
+    def adjust_free_outers_border(self, is_horizontal: bool, is_first: bool):
+        if is_horizontal:
+            range_max = self.xtot - 1
+            if is_first:
+                corners = (0, 1)
+            else:
+                corners = (3, 2)
+        else:
+            range_max = self.ytot - 1
+            if is_first:
+                corners = (0, 3)
+            else:
+                corners = (1, 2)
+        border = self.extract_border_from_two_corner_nums(*corners)
+        is_horizontal_to_cross = not(is_horizontal)
+        if self.is_collinear(corners[0], is_horizontal_to_cross) and self.is_collinear(corners[1], is_horizontal_to_cross):
+            for coord in range(1, range_max):
+                original_empty = border[2][coord].empty
+                if len(original_empty.greg_empty_settings.curve_ends) == 2:
+                    if is_horizontal:
+                        if is_first:
+                            midpoint = self.points_grid[0][coord]
+                            handle_up = midpoint.handle_up
+                            handle_down = midpoint.handle_down
+                            midpoint.handle_up = -handle_down * handle_up.length / handle_down.length
+                        else:
+                            midpoint = self.points_grid[self.ytot - 1][coord]
+                            handle_up = midpoint.handle_up
+                            handle_down = midpoint.handle_down
+                            midpoint.handle_down = -handle_up * handle_down.length / handle_up.length
+                    else:
+                        if is_first:
+                            midpoint = self.points_grid[coord][0]
+                            handle_left = midpoint.handle_left
+                            handle_right = midpoint.handle_right
+                            midpoint.handle_left = -handle_right * handle_left.length / handle_right.length
+                        else:
+                            midpoint = self.points_grid[coord][self.xtot - 1]
+                            handle_left = midpoint.handle_left
+                            handle_right = midpoint.handle_right
+                            midpoint.handle_right = -handle_left * handle_right.length / handle_left.length
+        else:
+            for coord in range(1, range_max):
+                point_for_subdivide = border[2][coord]
+                original_empty = point_for_subdivide.empty
+                if len(original_empty.greg_empty_settings.curve_ends) == 2:
+                    two_handles = (point_for_subdivide.handle_left, point_for_subdivide.handle_left)
+                    if is_horizontal:
+                        if is_first:
+                            midpoint = self.points_grid[0][coord]
+                            handle_to_correct = midpoint.handle_up
+                            three_handles = (*two_handles, midpoint.handle_down)
+                            res = GlobalForSubdivide.make_vector_coplanar_to_three_if_possible(handle_to_correct, three_handles)
+                            if res is not None:
+                                midpoint.handle_up = res
+                        else:
+                            midpoint = self.points_grid[self.ytot - 1][coord]
+                            handle_to_correct = midpoint.handle_down
+                            three_handles = (*two_handles, midpoint.handle_up)
+                            res = GlobalForSubdivide.make_vector_coplanar_to_three_if_possible(handle_to_correct, three_handles)
+                            if res is not None:
+                                midpoint.handle_down = res
+                    else:
+                        if is_first:
+                            midpoint = self.points_grid[coord][0]
+                            handle_to_correct = midpoint.handle_left
+                            three_handles = (*two_handles, midpoint.handle_right)
+                            res = GlobalForSubdivide.make_vector_coplanar_to_three_if_possible(handle_to_correct, three_handles)
+                            if res is not None:
+                                midpoint.handle_left = res
+                        else:
+                            midpoint = self.points_grid[coord][self.xtot - 1]
+                            handle_to_correct = midpoint.handle_right
+                            three_handles = (*two_handles, midpoint.handle_left)
+                            res = GlobalForSubdivide.make_vector_coplanar_to_three_if_possible(handle_to_correct, three_handles)
+                            if res is not None:
+                                midpoint.handle_right = res
+    
+    @staticmethod
+    def make_vector_coplanar_to_three_if_possible(handle_to_correct: mathutils.Vector,
+                                                  three_handles: Tuple[mathutils.Vector,
+                                                                       mathutils.Vector,
+                                                                       mathutils.Vector]) -> Optional[mathutils.Vector]:
+        if are_coplanar(*three_handles):
+            perpendicular = three_handles[0].cross(three_handles[1])
+            corrected_handle = (handle_to_correct - handle_to_correct.project(perpendicular))
+            corrected_handle = corrected_handle * handle_to_correct.length / corrected_handle.length
+            return corrected_handle
+        return None
+    
     def adjust_free_outers(self):
-        point0 = self.points_grid[0][0]
-        point1 = self.points_grid[0][self.xtot - 1]
-        if are_collinear(point0.handle_up, point0.handle_down) and are_collinear(point1.handle_up, point1.handle_down):
-            for x in range(1, self.xtot - 1):
-                midpoint1 = self.points_grid[0][x]
-                handle_up = midpoint1.handle_up
-                handle_down = midpoint1.handle_down
+        for is_horizontal in (True, False):
+            for is_first in (True, False):
+                self.adjust_free_outers_border(is_horizontal, is_first)
 
-                midpoint1.handle_up = -handle_down * handle_up.length / handle_down.length
-        point0 = self.points_grid[self.ytot - 1][0]
-        point1 = self.points_grid[self.ytot - 1][self.xtot - 1]
-        if are_collinear(point0.handle_up, point0.handle_down) and are_collinear(point1.handle_up, point1.handle_down):
-            for x in range(1, self.xtot - 1):
-                midpoint2 = self.points_grid[self.ytot - 1][x]
-                handle_up = midpoint2.handle_up
-                handle_down = midpoint2.handle_down
-                midpoint2.handle_down = -handle_up * handle_down.length / handle_up.length
-
-        point0 = self.points_grid[0][0]
-        point1 = self.points_grid[self.ytot - 1][0]
-        if are_collinear(point0.handle_left, point0.handle_right) and are_collinear(point1.handle_left, point1.handle_right):
-            for y in range(1, self.ytot - 1):
-                midpoint1 = self.points_grid[y][0]
-                handle_left = midpoint1.handle_left
-                handle_right = midpoint1.handle_right
-                midpoint1.handle_left = -handle_right * handle_left.length / handle_right.length
-        
-        point0 = self.points_grid[0][self.xtot - 1]
-        point1 = self.points_grid[self.ytot - 1][self.xtot - 1]
-        if are_collinear(point0.handle_left, point0.handle_right) and are_collinear(point1.handle_left, point1.handle_right):
-            for y in range(1, self.ytot - 1):
-                midpoint2 = self.points_grid[y][self.xtot - 1]
-                handle_left = midpoint2.handle_left
-                handle_right = midpoint2.handle_right
-                midpoint2.handle_right = -handle_left * handle_right.length / handle_left.length
+def get_approx_bezier_length(co_s: Tuple[mathutils.Vector, mathutils.Vector],
+                             handles: Tuple[mathutils.Vector, mathutils.Vector]) -> float:
+    points_handles = [co + handle for co, handle in zip(co_s, handles)]
+    length_extremities = (co_s[1] - co_s[0]).length
+    lengths_handles = [handle.length for handle in handles]
+    between_handles_length = (points_handles[1] - points_handles[0]).length
+    approx_length = (length_extremities + between_handles_length + sum(lengths_handles)) / 2
+    return approx_length
 
 def coplanar_collinear_add_one_end(empty_obj, collection, new_end):
     for end in empty_obj.greg_empty_settings.curve_ends:
@@ -4019,6 +4120,12 @@ class CurveForSubdivide:
             self.mirror_sequence: List["MirrorSequenceItem"] = []
         else:
             self.mirror_sequence = mirror_sequence
+    
+    def get_approx_length(self):
+        bezier_points = self.original_curve.data.splines[0].bezier_points
+        co_s = [point.co for point in bezier_points]
+        handles = (bezier_points[0].handle_right - co_s[0], bezier_points[1].handle_left - co_s[1])
+        return get_approx_bezier_length(co_s, handles)
 
 class MirrorSequenceItem:
     def __init__(self, mirror_object: bpy.types.Object, axis: int):
@@ -4053,27 +4160,18 @@ class GregSubdivide(bpy.types.Operator):
                 curves.append(obj)
         if len(curves) == 0 or len(empties) == 0:
             return False
-
+        if verify_complete_for_subdivide(context) is None:
+            return False
         return True
 
     def execute(self, context: bpy.types.Context):        # execute() is called when running the operator.
-        empties = []
-        curves = []
-        corners = []
         collection = get_greg_collection(context.selected_objects[0])
-        for obj in context.selected_objects:
-            if obj.greg_curve_settings.used_for_greg:
-                curves.append(obj)
-                empties.extend((obj.greg_curve_settings.end1_empty, obj.greg_curve_settings.end1_empty))
-            elif obj.greg_empty_settings.used_for_greg:
-                corners.append(obj)
-        empties = set(empties) # remove duplicates
-        g_list = GlobalForSubdivide()
-        for curve in curves:
-            g_list.add_curve_and_mirrors(curve)
-        res = g_list.find_borders(corners)
-        if res == False:
+        res = verify_complete_for_subdivide(context)
+        if res is None:
             raise ValueError("invalid corners or borders selected!")
+        else:
+            g_list, optimal_quad, empties = res
+        g_list.add_optimal_quad(optimal_quad)
         for empty_obj in empties:
             for end in empty_obj.greg_empty_settings.curve_ends:
                 apply_hook(end)
@@ -4082,6 +4180,27 @@ class GregSubdivide(bpy.types.Operator):
         g_list.adjust_free_outers()
         g_list.add_real_curves(collection, context)
         return {'FINISHED'}    
+
+def verify_complete_for_subdivide(context: bpy.types.Context) -> Optional[Tuple[GlobalForSubdivide, List[int], Set[bpy.types.Object]]]:
+    empties = []
+    curves = []
+    corners = []
+    for obj in context.selected_objects:
+        if obj.greg_curve_settings.used_for_greg:
+            curves.append(obj)
+            empties.extend((obj.greg_curve_settings.end1_empty, obj.greg_curve_settings.end1_empty))
+        elif obj.greg_empty_settings.used_for_greg:
+            corners.append(obj)
+    empties = set(empties) # remove duplicates
+    g_list = GlobalForSubdivide()
+    for curve in curves:
+        g_list.add_curve_and_mirrors(curve)
+    res = g_list.find_borders(corners)
+    if res == False:
+        return None
+    else:
+        optimal_quad = res
+        return g_list, optimal_quad, empties
 
 def add_greg_subdivide_func(self, context: bpy.types.Context):
     self.layout.operator(GregSubdivide.bl_idname)
