@@ -31,7 +31,7 @@ from typing import List, Optional, Tuple, Dict, Set
 from enum import Enum
 import math
 
-TH = 0.00001
+TH = 0.0001
 TH2 = TH**2
 
 #**************************************************************************
@@ -3090,7 +3090,9 @@ class GlobalForSubdivide:
         return res
 
     @staticmethod
-    def get_handles_left_right(point, curve_prev, curve_post):
+    def get_handles_left_right(point: "PointForSubdivide",
+                               curve_prev: "CurveForSubdivide",
+                               curve_post: "CurveForSubdivide") -> Tuple[mathutils.Vector, mathutils.Vector]:
         if curve_prev.points[0] == point:
             handle_left_point_init = curve_prev.original_curve.data.splines[0].bezier_points[0].handle_right
         elif curve_prev.points[1] == point:
@@ -3106,7 +3108,9 @@ class GlobalForSubdivide:
         return handle_left, handle_right
 
     @staticmethod
-    def get_outer_handles_left_right(point, curve_prev, curve_post):
+    def get_outer_handles_left_right(point: "PointForSubdivide",
+                                     curve_prev: "CurveForSubdivide",
+                                     curve_post: "CurveForSubdivide") -> Tuple[mathutils.Vector, mathutils.Vector]:
         if curve_prev.points[0] == point:
             handle_right_point_init = curve_prev.original_curve.data.splines[0].bezier_points[0].handle_left
         elif curve_prev.points[1] == point:
@@ -3445,6 +3449,23 @@ class GlobalForSubdivide:
                                                         j += 1
         return cross_hs
     
+    @staticmethod
+    def adjust_cross_handles_lengths(border: List["CurveForSubdivide"],
+                                     handles: List[Optional[mathutils.Vector]]):
+        curves_lengths = [curve.get_approx_length() for curve in border]
+        total_length = sum(curves_lengths)
+        handle0_length = handles[0].length
+        handle1_length = handles[-1].length
+        this_length = 0
+        for curve_length, i in zip(curves_lengths[:-1], range(1, len(handles)-1)):
+            this_length += curve_length
+            handle = handles[i]
+            if handle is not None:
+                mixing_factor = this_length / total_length
+                this_handle_length = handle1_length * mixing_factor + handle0_length * (1 - mixing_factor)
+                handles[i] = handle.normalized() * this_handle_length
+
+    
     def subdivide(self):
         self.extract_xtot_ytot()
         v1 = self.extract_coords(0)
@@ -3461,7 +3482,10 @@ class GlobalForSubdivide:
         self.extract_corner_handles()
         self.fill_handles()
         borders = (self.border0, self.border1, self.border2, self.border3)
-        cross_hs = [GlobalForSubdivide.populate_handles(border, self.extract_handles(i)) for i, border in enumerate(borders)]
+        cross_hs_candidates = [self.extract_handles(i) for i in range(4)]
+        for cross_hs_candidate, border in zip(cross_hs_candidates, borders):
+            GlobalForSubdivide.adjust_cross_handles_lengths(border, cross_hs_candidate)
+        cross_hs = [GlobalForSubdivide.populate_handles(border, cross_hs_candidates[i]) for i, border in enumerate(borders)]
         cross_hs = self.adjust_if_border_on_mirror(cross_hs)
         outer_hs = [GlobalForSubdivide.populate_handles(border, self.extract_handles(i, True)) for i, border in enumerate(borders)]
         cross_h1 = cross_hs[0]
@@ -3901,23 +3925,23 @@ class GlobalForSubdivide:
                             midpoint = self.points_grid[0][coord]
                             handle_up = midpoint.handle_up
                             handle_down = midpoint.handle_down
-                            midpoint.handle_up = -handle_down * handle_up.length / handle_down.length
+                            midpoint.handle_up = -handle_down.normalized() * handle_up.length
                         else:
                             midpoint = self.points_grid[self.ytot - 1][coord]
                             handle_up = midpoint.handle_up
                             handle_down = midpoint.handle_down
-                            midpoint.handle_down = -handle_up * handle_down.length / handle_up.length
+                            midpoint.handle_down = -handle_up.normalized() * handle_down.length
                     else:
                         if is_first:
                             midpoint = self.points_grid[coord][0]
                             handle_left = midpoint.handle_left
                             handle_right = midpoint.handle_right
-                            midpoint.handle_left = -handle_right * handle_left.length / handle_right.length
+                            midpoint.handle_left = -handle_right.normalized() * handle_left.length
                         else:
                             midpoint = self.points_grid[coord][self.xtot - 1]
                             handle_left = midpoint.handle_left
                             handle_right = midpoint.handle_right
-                            midpoint.handle_right = -handle_left * handle_right.length / handle_left.length
+                            midpoint.handle_right = -handle_left.normalized() * handle_right.length
         else:
             for coord in range(1, range_max):
                 point_for_subdivide = border[2][coord]
@@ -3928,14 +3952,14 @@ class GlobalForSubdivide:
                         if is_first:
                             midpoint = self.points_grid[0][coord]
                             handle_to_correct = midpoint.handle_up
-                            three_handles = (*two_handles, midpoint.handle_down)
+                            three_handles = (midpoint.handle_down, *two_handles)
                             res = GlobalForSubdivide.make_vector_coplanar_to_three_if_possible(handle_to_correct, three_handles)
                             if res is not None:
                                 midpoint.handle_up = res
                         else:
                             midpoint = self.points_grid[self.ytot - 1][coord]
                             handle_to_correct = midpoint.handle_down
-                            three_handles = (*two_handles, midpoint.handle_up)
+                            three_handles = (midpoint.handle_up, *two_handles)
                             res = GlobalForSubdivide.make_vector_coplanar_to_three_if_possible(handle_to_correct, three_handles)
                             if res is not None:
                                 midpoint.handle_down = res
@@ -3943,14 +3967,14 @@ class GlobalForSubdivide:
                         if is_first:
                             midpoint = self.points_grid[coord][0]
                             handle_to_correct = midpoint.handle_left
-                            three_handles = (*two_handles, midpoint.handle_right)
+                            three_handles = (midpoint.handle_right, *two_handles)
                             res = GlobalForSubdivide.make_vector_coplanar_to_three_if_possible(handle_to_correct, three_handles)
                             if res is not None:
                                 midpoint.handle_left = res
                         else:
                             midpoint = self.points_grid[coord][self.xtot - 1]
                             handle_to_correct = midpoint.handle_right
-                            three_handles = (*two_handles, midpoint.handle_left)
+                            three_handles = (midpoint.handle_left, *two_handles)
                             res = GlobalForSubdivide.make_vector_coplanar_to_three_if_possible(handle_to_correct, three_handles)
                             if res is not None:
                                 midpoint.handle_right = res
@@ -3962,8 +3986,10 @@ class GlobalForSubdivide:
                                                                        mathutils.Vector]) -> Optional[mathutils.Vector]:
         if are_coplanar(*three_handles):
             perpendicular = three_handles[0].cross(three_handles[1])
+            if perpendicular.length < TH:
+                perpendicular = three_handles[0].cross(three_handles[2])
             corrected_handle = (handle_to_correct - handle_to_correct.project(perpendicular))
-            corrected_handle = corrected_handle * handle_to_correct.length / corrected_handle.length
+            corrected_handle = corrected_handle.normalized() * handle_to_correct.length
             return corrected_handle
         return None
     
@@ -4318,7 +4344,7 @@ def get_handles_from_vecs_to_extrude(vecs: List[mathutils.Vector]) -> Tuple[math
         result_vec = vector_mean(vecs)
         if result_vec.length < mean_length * 0.3:
             result_vec = get_normal_vector(vecs)
-    handle_left = result_vec * mean_length / result_vec.length
+    handle_left = result_vec.normalized() * mean_length
     return handle_left, -handle_left
 
 def get_perpendicular_vec(vec: mathutils.Vector):
@@ -4442,6 +4468,10 @@ class GregMergeAtLast(bpy.types.Operator):
 class GregMergeSub(bpy.types.Menu):
     bl_label = 'Greg: merge'
     bl_idname = 'VIEW3D_MT_merge_submenu'
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context):
+        return merge_poll(context)
 
     def draw(self, context):
         layout = self.layout
