@@ -99,8 +99,14 @@ def verify_arrow_returned(collection):
                     new_arrow_item.name = arrow_name
                     new_arrow_item.arrow = arrow_obj
 
+def traverse_tree(t):
+    yield t
+    for child in t.children:
+        yield from traverse_tree(child)
+
 def verify_curve_deleted_or_returned():
-    for collection in bpy.data.collections:
+    coll = bpy.context.scene.collection
+    for collection in traverse_tree(coll):
         if collection.greg_settings.used_for_greg:
             verify_arrow_returned(collection)
             for setting in collection.greg_settings.curves:
@@ -379,307 +385,156 @@ def preserve_coplanar_to_two_planes_object_mode(end):
             add_hook(end)
 
 #**************************************************************************
-try:
-    #raise(ModuleNotFoundError)
-    import numpy as np
-    import numpy.typing as npt
-    J_S = np.arange(4)                               # shape (4), [0, 1, 2, 3]
-    COMBS = np.array([math.comb(3, j) for j in J_S]) # shape (4), [1, 3, 3, 1]
-    class DependantsOfResolution_np:
-        def __init__(self):
-            self.nedges = 0
-            self.v0: npt.NDArray[np.float64]
-            self.u0: npt.NDArray[np.float64]
-            self.v02: npt.NDArray[np.float64]
-            self.u02: npt.NDArray[np.float64]
-            self.uv_div: npt.NDArray[np.float64]
-            self.berns: npt.NDArray[np.float64]
-            self.berns2d: npt.NDArray[np.float64]
-            self.dims1: npt.NDArray[np.float64]
-            self.dims2: npt.NDArray[np.float64]
-        
-        def calculate_faces(self):
-            faces: List[List[int]] = []
-            for i in range(self.nedges-2):
-                for j in range(self.nedges-2):
-                    face = [i * (self.nedges - 1) + j]
-                    face.append(i * (self.nedges - 1) + j + 1)
-                    face.append((i + 1) * (self.nedges - 1) + j + 1)
-                    face.append((i + 1) * (self.nedges - 1) + j)
-                    faces.append(face)
-            self.faces = np.array(faces)
 
-        def conditional_update(self, nedges: int):
-            if self.nedges != nedges:
-                self.nedges = nedges
-                self.update()
-
-        def update(self):
-            v = np.linspace(0, 1, self.nedges + 1) # shape      (N+1)
-            u = np.expand_dims(v, 1)               # shape (N+1, 1  )
-            self.v0 = v[1:self.nedges]             # shape      (N-1)
-            self.u0 = u[1:self.nedges]             # shape (N-1, 1  )
-            self.v02 = np.expand_dims(np.stack((self.v0, 1-self.v0), 1), axis=(1,3)) # shape      (N-1, 1, 2, 1)
-            self.u02 = np.expand_dims(self.v02, axis=4)                              # shape (N-1, 1  , 2, 1, 1)
-            self.uv_div = self.u02 + self.v02                                        # shape (N-1, N-1, 2, 2, 1)
-
-            self.berns = np.expand_dims(COMBS * self.u0**J_S * (1-self.u0)**(3-J_S), axis=1) # shape      (N-1, 1, 4)
-            berns_np_2 = np.expand_dims(self.berns, axis=3)                                  # shape (N-1, 1  , 4, 1)
-            self.berns2 = np.expand_dims(self.berns*berns_np_2, axis=4)                      # shape (N-1, N-1, 4, 4, 1)
-
-            # numpy magic to get products of all combinations of Bernstein coefficients
-
-            self.dims1 = np.empty((self.nedges-1, self.nedges-1, 1, 2, 3))
-            self.dims2 = np.empty((self.nedges-1, self.nedges-1, 4, 1, 3))
-            self.calculate_faces()
-
-    def calc_control_points_np(input1: List[List[mathutils.Vector]],
-                               input2: List[List[mathutils.Vector]],
-                               d: DependantsOfResolution_np):
-        full = np.array(input1)                     # shape           (4, 4, 3)
-        cp_u = full[1:3, 1:3, :]                    # shape           (2, 2, 3)
-        cp_v = np.array(input2)                     # shape           (2, 2, 3)
-        cp_central = (cp_u*d.v02 + cp_v*d.u02) / d.uv_div # shape (N-1, N-1, 2, 2, 3)
-
-        top, _ = np.broadcast_arrays(full[0, 1:3], d.dims1)        # shape (N-1, N-1, 1, 2, 3)
-        bottom, _ = np.broadcast_arrays(full[3, 1:3], d.dims1)     # shape (N-1, N-1, 1, 2, 3)
-        res1 = np.concatenate((top, cp_central, bottom), axis=2) # shape (N-1, N-1, 4, 2, 3)
-        left, _ = np.broadcast_arrays(np.expand_dims(full[:, 0], axis=1), d.dims2)  # shape (N-1, N-1, 4, 1, 3)
-        right, _ = np.broadcast_arrays(np.expand_dims(full[:, 3], axis=1), d.dims2) # shape (N-1, N-1, 4, 1, 3)
-        res2 = np.concatenate((left, res1, right), axis=3)  # shape (N-1, N-1, 4, 4, 3)
-        return res2
+import numpy as np
+import numpy.typing as npt
+J_S = np.arange(4)                               # shape (4), [0, 1, 2, 3]
+COMBS = np.array([math.comb(3, j) for j in J_S]) # shape (4), [1, 3, 3, 1]
+class DependantsOfResolution_np:
+    def __init__(self):
+        self.nedges = 0
+        self.v0: npt.NDArray[np.float64]
+        self.u0: npt.NDArray[np.float64]
+        self.v02: npt.NDArray[np.float64]
+        self.u02: npt.NDArray[np.float64]
+        self.uv_div: npt.NDArray[np.float64]
+        self.berns: npt.NDArray[np.float64]
+        self.berns2d: npt.NDArray[np.float64]
+        self.dims1: npt.NDArray[np.float64]
+        self.dims2: npt.NDArray[np.float64]
     
-    def calc_bezier_curve_np(k0: mathutils.Vector,
-                          k1: mathutils.Vector,
-                          k2: mathutils.Vector,
-                          k3: mathutils.Vector,
-                          d: DependantsOfResolution_np):
-        ks = np.array([k0, k1, k2, k3]).T # shape (3, 4)
-        return np.sum(d.berns * ks, 2) # shape (N-1, 3)
-    
-    def add_corner(glist: "GlobalList", coords: mathutils.Vector):
-        if glist.verts is None:
-            glist.verts = np.array([coords])
-        else:
-            assert isinstance(glist.verts, np.ndarray)
-            glist.verts = np.vstack((glist.verts, np.array([coords])))
-    
-    def add_border(k0: mathutils.Vector,
-                   k1: mathutils.Vector,
-                   k2: mathutils.Vector,
-                   k3: mathutils.Vector,
-                   glist: "GlobalList",
-                   d: "DependantsOfResolution | DependantsOfResolution_np"):
-        assert isinstance(d, DependantsOfResolution_np)
-        if glist.verts is None:
-            init_point = 0
-        else:
-            init_point = len(glist.verts)
-        border = list(range(init_point, init_point + d.nedges - 1))
-        border_coords = calc_bezier_curve_np(k0, k1, k2, k3, d)
-        if glist.verts is None:
-            glist.verts = border_coords
-        else:
-            assert isinstance(glist.verts, np.ndarray)
-            glist.verts = np.vstack((glist.verts, border_coords))
-        return border
-    
-    def calc_quad_gregory_verts(kk, kk1, d):
-        control_points = calc_control_points_np(kk, kk1, d)
-        res: npt.NDArray[np.float64] = np.sum((d.berns2 * control_points), (2, 3)).reshape((d.nedges-1) * (d.nedges-1), 3)
-        # numpy representation of the formula p(u,v) = sum_i_from_0_to_3(sum_j_from_0_to_3( k(i,j)*B(i,u)*B(j,v) ))
-        return res
+    def calculate_faces(self):
+        faces: List[List[int]] = []
+        for i in range(self.nedges-2):
+            for j in range(self.nedges-2):
+                face = [i * (self.nedges - 1) + j]
+                face.append(i * (self.nedges - 1) + j + 1)
+                face.append((i + 1) * (self.nedges - 1) + j + 1)
+                face.append((i + 1) * (self.nedges - 1) + j)
+                faces.append(face)
+        self.faces = np.array(faces)
 
-    def calc_gregory_surf(kk: List[List[mathutils.Vector]],
-                          kk1: List[List[mathutils.Vector]],
-                          d: "DependantsOfResolution_np | DependantsOfResolution",
-                          border1: List[int],
-                          border2: List[int],
-                          border3: List[int],
-                          border4: List[int],
-                          corner1: int,
-                          corner2: int,
-                          corner3: int,
-                          corner4: int,
-                          glist: "GlobalList") -> None:
-        assert isinstance(d, DependantsOfResolution_np)
-        res = calc_quad_gregory_verts(kk, kk1, d)
-        # numpy representation of the formula p(u,v) = sum_i_from_0_to_3(sum_j_from_0_to_3( k(i,j)*B(i,u)*B(j,v) ))
-        if glist.verts is None:
-            glist.verts = res
-            num_points = 0
-        else:
-            assert isinstance(glist.verts, np.ndarray)
-            num_points = len(glist.verts)
-            glist.verts = np.vstack((glist.verts, res))
-        this_faces = d.faces + num_points
-        if glist.faces is None:
-            glist.faces = this_faces
-        else:
-            assert isinstance(glist.faces, np.ndarray)
-            glist.faces = np.vstack((glist.faces, this_faces))
-        faces_border4: npt.NDArray[np.int64] = np.array([[border4[i+1], border4[i], this_faces[i*(d.nedges-2)][0], this_faces[i*(d.nedges-2)][3]] for i in range(d.nedges-2)])
-        faces_border1: npt.NDArray[np.int64] = np.array([[border1[i], border1[i+1], this_faces[i][1], this_faces[i][0]] for i in range(d.nedges-2)])
-        faces_border2: npt.NDArray[np.int64] = np.array([[border2[i], border2[i+1], this_faces[i*(d.nedges-2)+d.nedges-3][2], this_faces[i*(d.nedges-2)+d.nedges-3][1]] for i in range(d.nedges-2)])
-        faces_border3: npt.NDArray[np.int64] = np.array([[border3[i+1], border3[i], this_faces[(d.nedges-2)*(d.nedges-3)+i][3], this_faces[(d.nedges-2)*(d.nedges-3)+i][2]] for i in range(d.nedges-2)])
-        face_corner1: npt.NDArray[np.int64] = np.array([[corner1, border1[0], this_faces[0][0], border4[0]]])
-        face_corner2: npt.NDArray[np.int64] = np.array([[corner2, border2[0], this_faces[d.nedges-3][1], border1[d.nedges-2]]])
-        face_corner3: npt.NDArray[np.int64] = np.array([[corner3, border3[d.nedges-2], this_faces[(d.nedges-2)*(d.nedges-2)-1][2], border2[d.nedges-2]]])
-        face_corner4: npt.NDArray[np.int64] = np.array([[corner4, border4[d.nedges-2], this_faces[(d.nedges-2)*(d.nedges-3)][3], border3[0]]])
-        glist.faces = np.vstack((glist.faces, faces_border1, faces_border2, faces_border3, faces_border4, face_corner1, face_corner2, face_corner3, face_corner4))
+    def conditional_update(self, nedges: int):
+        if self.nedges != nedges:
+            self.nedges = nedges
+            self.update()
 
-    d = DependantsOfResolution_np()
+    def update(self):
+        v = np.linspace(0, 1, self.nedges + 1) # shape      (N+1)
+        u = np.expand_dims(v, 1)               # shape (N+1, 1  )
+        self.v0 = v[1:self.nedges]             # shape      (N-1)
+        self.u0 = u[1:self.nedges]             # shape (N-1, 1  )
+        self.v02 = np.expand_dims(np.stack((self.v0, 1-self.v0), 1), axis=(1,3)) # shape      (N-1, 1, 2, 1)
+        self.u02 = np.expand_dims(self.v02, axis=4)                              # shape (N-1, 1  , 2, 1, 1)
+        self.uv_div = self.u02 + self.v02                                        # shape (N-1, N-1, 2, 2, 1)
 
-except (ModuleNotFoundError, ImportError):
-    from copy import deepcopy
-    def bernstein(i: int, u: float):
-        return math.comb(3, i) * u**i * (1-u)**(3-i)
+        self.berns = np.expand_dims(COMBS * self.u0**J_S * (1-self.u0)**(3-J_S), axis=1) # shape      (N-1, 1, 4)
+        berns_np_2 = np.expand_dims(self.berns, axis=3)                                  # shape (N-1, 1  , 4, 1)
+        self.berns2 = np.expand_dims(self.berns*berns_np_2, axis=4)                      # shape (N-1, N-1, 4, 4, 1)
 
-    class DependantsOfResolution:
-        def __init__(self):
-            self.nedges = 0
-            self.berns: List[List[float]]
-            self.b2: List[List[List[List[float]]]]
-            self.faces: List[List[int]]
+        # numpy magic to get products of all combinations of Bernstein coefficients
 
-        def conditional_update(self, nedges: int):
-            if self.nedges != nedges:
-                self.nedges = nedges
-                self.berns = [[bernstein(i, k/nedges) for i in range(4)] for k in range(nedges + 1)]
-                self.b2 = [[[[self.berns2_el(i,j,nu,nv) for j in range(4)] for i in range(4)]\
-                               for nv in range(nedges + 1)] for nu in range(nedges + 1)]
-                self.calculate_faces()
+        self.dims1 = np.empty((self.nedges-1, self.nedges-1, 1, 2, 3))
+        self.dims2 = np.empty((self.nedges-1, self.nedges-1, 4, 1, 3))
+        self.calculate_faces()
 
-        def berns2_el(self, i: int, j: int, nu: int, nv:int):
-            return self.berns[nu][i] * self.berns[nv][j]
-        
-        def calculate_faces(self):
-            self.faces: List[List[int]] = []
-            for i in range(self.nedges-2):
-                for j in range(self.nedges-2):
-                    face = [i * (self.nedges - 1) + j]
-                    face.append(i * (self.nedges - 1) + j + 1)
-                    face.append((i + 1) * (self.nedges - 1) + j + 1)
-                    face.append((i + 1) * (self.nedges - 1) + j)
-                    self.faces.append(face)
+def calc_control_points_np(input1: List[List[mathutils.Vector]],
+                            input2: List[List[mathutils.Vector]],
+                            d: DependantsOfResolution_np):
+    full = np.array(input1)                     # shape           (4, 4, 3)
+    cp_u = full[1:3, 1:3, :]                    # shape           (2, 2, 3)
+    cp_v = np.array(input2)                     # shape           (2, 2, 3)
+    cp_central = (cp_u*d.v02 + cp_v*d.u02) / d.uv_div # shape (N-1, N-1, 2, 2, 3)
 
-    def calc_control_points(kk: List[List[mathutils.Vector]],
-                            kk1: List[List[mathutils.Vector]],
-                            nu: int,
-                            nv: int,
-                            d: DependantsOfResolution):
-        u = nu / d.nedges
-        v = nv / d.nedges
-        cp = deepcopy(kk)
-        cp[1][1] = (u * kk1[0][0] + v * kk[1][1]) / (u + v)
-        cp[2][1] = ((1 - u) * kk1[1][0] + v * kk[2][1]) / (1 - u + v)
-        cp[1][2] = (u * kk1[0][1] + (1 - v) * kk[1][2]) / (1 - v + u)
-        cp[2][2] = ((1 - u) * kk1[1][1] + (1 - v) * kk[2][2]) / (2 - u - v)
-        return cp
+    top, _ = np.broadcast_arrays(full[0, 1:3], d.dims1)        # shape (N-1, N-1, 1, 2, 3)
+    bottom, _ = np.broadcast_arrays(full[3, 1:3], d.dims1)     # shape (N-1, N-1, 1, 2, 3)
+    res1 = np.concatenate((top, cp_central, bottom), axis=2) # shape (N-1, N-1, 4, 2, 3)
+    left, _ = np.broadcast_arrays(np.expand_dims(full[:, 0], axis=1), d.dims2)  # shape (N-1, N-1, 4, 1, 3)
+    right, _ = np.broadcast_arrays(np.expand_dims(full[:, 3], axis=1), d.dims2) # shape (N-1, N-1, 4, 1, 3)
+    res2 = np.concatenate((left, res1, right), axis=3)  # shape (N-1, N-1, 4, 4, 3)
+    return res2
 
-    def calc_point(nu: int,
-                   nv: int,
-                   kk: List[List[mathutils.Vector]],
-                   kk1: List[List[mathutils.Vector]],
-                   d: DependantsOfResolution):
-        el: List[float] = []
-        control_points = calc_control_points(kk, kk1, nu, nv, d)
-        for k in range(3):
-            el.append(sum(sum(control_points[i][j][k] * d.b2[nu][nv][i][j] for j in range(4)) for i in range(4)))
-        return mathutils.Vector(el)
-    
-    def augment_faces(cons: int, d: DependantsOfResolution):
-        res: List[List[int]] = []
-        for face in d.faces:
-            res.append([])
-            for vert in face:
-                res[-1].append(vert + cons)
-        return res
-    
-    def add_corner(glist: "GlobalList", coords: mathutils.Vector):
-        if glist.verts is None:
-            glist.verts = [coords]
-        else:
-            assert isinstance(glist.verts, list)
-            glist.verts.append(coords)
-    
-    def add_border(k0: mathutils.Vector,
-                   k1: mathutils.Vector,
-                   k2: mathutils.Vector,
-                   k3: mathutils.Vector,
-                   glist: "GlobalList",
-                   d: "DependantsOfResolution | DependantsOfResolution_np"):
-        if glist.verts is None:
-            glist.verts = []
-        else:
-            assert isinstance(glist.verts, list)
+def calc_bezier_curve_np(k0: mathutils.Vector,
+                        k1: mathutils.Vector,
+                        k2: mathutils.Vector,
+                        k3: mathutils.Vector,
+                        d: DependantsOfResolution_np):
+    ks = np.array([k0, k1, k2, k3]).T # shape (3, 4)
+    return np.sum(d.berns * ks, 2) # shape (N-1, 3)
+
+def add_corner(glist: "GlobalList", coords: mathutils.Vector):
+    if glist.verts is None:
+        glist.verts = np.array([coords])
+    else:
+        assert isinstance(glist.verts, np.ndarray)
+        glist.verts = np.vstack((glist.verts, np.array([coords])))
+
+def add_border(k0: mathutils.Vector,
+                k1: mathutils.Vector,
+                k2: mathutils.Vector,
+                k3: mathutils.Vector,
+                glist: "GlobalList",
+                d: "DependantsOfResolution | DependantsOfResolution_np"):
+    assert isinstance(d, DependantsOfResolution_np)
+    if glist.verts is None:
+        init_point = 0
+    else:
         init_point = len(glist.verts)
-        border = list(range(init_point, init_point + d.nedges - 1))
-        border_coords = calc_bezier_curve(k0, k1, k2, k3, d)
-        glist.verts.extend(border_coords)
-        return border
-    
-    def calc_bezier_curve(k0: mathutils.Vector,
-                          k1: mathutils.Vector,
-                          k2: mathutils.Vector,
-                          k3: mathutils.Vector,
-                          d: "DependantsOfResolution_np | DependantsOfResolution") -> "npt.NDArray[np.float64] | List[mathutils.Vector]":
-        assert isinstance(d, DependantsOfResolution)
-        points = [k0, k1, k2, k3]
-        return [my_vector_sum([d.berns[k][i] * points[i] for i in range(4)]) for k in range(1, d.nedges)]
+    border = list(range(init_point, init_point + d.nedges - 1))
+    border_coords = calc_bezier_curve_np(k0, k1, k2, k3, d)
+    if glist.verts is None:
+        glist.verts = border_coords
+    else:
+        assert isinstance(glist.verts, np.ndarray)
+        glist.verts = np.vstack((glist.verts, border_coords))
+    return border
 
-    def calc_quad_gregory_verts(kk, kk1, d):
-        return [calc_point(nu, nv, kk, kk1, d) for nv in range(1, d.nedges) for nu in range(1, d.nedges)]
+def calc_quad_gregory_verts(kk, kk1, d):
+    control_points = calc_control_points_np(kk, kk1, d)
+    res: npt.NDArray[np.float64] = np.sum((d.berns2 * control_points), (2, 3)).reshape((d.nedges-1) * (d.nedges-1), 3)
+    # numpy representation of the formula p(u,v) = sum_i_from_0_to_3(sum_j_from_0_to_3( k(i,j)*B(i,u)*B(j,v) ))
+    return res
 
-    def calc_gregory_surf(kk: List[List[mathutils.Vector]],
-                          kk1: List[List[mathutils.Vector]],
-                          d: "DependantsOfResolution_np | DependantsOfResolution",
-                          border1: List[int],
-                          border2: List[int],
-                          border3: List[int],
-                          border4: List[int],
-                          corner1: int,
-                          corner2: int,
-                          corner3: int,
-                          corner4: int,
-                          glist: "GlobalList") -> None:
-        assert isinstance(d, DependantsOfResolution)
-        res = calc_quad_gregory_verts(kk, kk1, d)
-        if glist.verts is None:
-            glist.verts = []
+def calc_gregory_surf(kk: List[List[mathutils.Vector]],
+                        kk1: List[List[mathutils.Vector]],
+                        d: "DependantsOfResolution_np | DependantsOfResolution",
+                        border1: List[int],
+                        border2: List[int],
+                        border3: List[int],
+                        border4: List[int],
+                        corner1: int,
+                        corner2: int,
+                        corner3: int,
+                        corner4: int,
+                        glist: "GlobalList") -> None:
+    assert isinstance(d, DependantsOfResolution_np)
+    res = calc_quad_gregory_verts(kk, kk1, d)
+    # numpy representation of the formula p(u,v) = sum_i_from_0_to_3(sum_j_from_0_to_3( k(i,j)*B(i,u)*B(j,v) ))
+    if glist.verts is None:
+        glist.verts = res
+        num_points = 0
+    else:
+        assert isinstance(glist.verts, np.ndarray)
         num_points = len(glist.verts)
-        assert isinstance(glist.verts, list)
-        glist.verts.extend(res)
-        this_faces = augment_faces(num_points, d)
-        if glist.faces is None:
-            glist.faces = []
-        assert isinstance(glist.faces, list)
-        glist.faces.extend(this_faces)
-        glist.faces.extend([[border4[i+1], border4[i], this_faces[i*(d.nedges-2)][0], this_faces[i*(d.nedges-2)][3]] for i in range(d.nedges-2)])
-        glist.faces.extend([[border1[i], border1[i+1], this_faces[i][1], this_faces[i][0]] for i in range(d.nedges-2)])
-        glist.faces.extend([[border2[i], border2[i+1], this_faces[i*(d.nedges-2)+d.nedges-3][2], this_faces[i*(d.nedges-2)+d.nedges-3][1]] for i in range(d.nedges-2)])
-        glist.faces.extend([[border3[i+1], border3[i], this_faces[(d.nedges-2)*(d.nedges-3)+i][3], this_faces[(d.nedges-2)*(d.nedges-3)+i][2]] for i in range(d.nedges-2)])
-        glist.faces.append([corner1, border1[0], this_faces[0][0], border4[0]])
-        glist.faces.append([corner2, border2[0], this_faces[d.nedges-3][1], border1[d.nedges-2]])
-        glist.faces.append([corner3, border3[d.nedges-2], this_faces[(d.nedges-2)*(d.nedges-2)-1][2], border2[d.nedges-2]])
-        glist.faces.append([corner4, border4[d.nedges-2], this_faces[(d.nedges-2)*(d.nedges-3)][3], border3[0]])
+        glist.verts = np.vstack((glist.verts, res))
+    this_faces = d.faces + num_points
+    if glist.faces is None:
+        glist.faces = this_faces
+    else:
+        assert isinstance(glist.faces, np.ndarray)
+        glist.faces = np.vstack((glist.faces, this_faces))
+    faces_border4: npt.NDArray[np.int64] = np.array([[border4[i+1], border4[i], this_faces[i*(d.nedges-2)][0], this_faces[i*(d.nedges-2)][3]] for i in range(d.nedges-2)])
+    faces_border1: npt.NDArray[np.int64] = np.array([[border1[i], border1[i+1], this_faces[i][1], this_faces[i][0]] for i in range(d.nedges-2)])
+    faces_border2: npt.NDArray[np.int64] = np.array([[border2[i], border2[i+1], this_faces[i*(d.nedges-2)+d.nedges-3][2], this_faces[i*(d.nedges-2)+d.nedges-3][1]] for i in range(d.nedges-2)])
+    faces_border3: npt.NDArray[np.int64] = np.array([[border3[i+1], border3[i], this_faces[(d.nedges-2)*(d.nedges-3)+i][3], this_faces[(d.nedges-2)*(d.nedges-3)+i][2]] for i in range(d.nedges-2)])
+    face_corner1: npt.NDArray[np.int64] = np.array([[corner1, border1[0], this_faces[0][0], border4[0]]])
+    face_corner2: npt.NDArray[np.int64] = np.array([[corner2, border2[0], this_faces[d.nedges-3][1], border1[d.nedges-2]]])
+    face_corner3: npt.NDArray[np.int64] = np.array([[corner3, border3[d.nedges-2], this_faces[(d.nedges-2)*(d.nedges-2)-1][2], border2[d.nedges-2]]])
+    face_corner4: npt.NDArray[np.int64] = np.array([[corner4, border4[d.nedges-2], this_faces[(d.nedges-2)*(d.nedges-3)][3], border3[0]]])
+    glist.faces = np.vstack((glist.faces, faces_border1, faces_border2, faces_border3, faces_border4, face_corner1, face_corner2, face_corner3, face_corner4))
 
-    def my_vector_sum(li: List[mathutils.Vector]):
-        s = li[0]
-        for ve in li[1:]:
-            s += ve
-        return s
+d = DependantsOfResolution_np()
 
-    def generate_bezier(p1: mathutils.Vector,
-                        p2: mathutils.Vector,
-                        h1: mathutils.Vector,
-                        h2: mathutils.Vector,
-                        d: DependantsOfResolution):
-        assert isinstance(d, DependantsOfResolution)
-        points = [p1, p1 + h1, p2 + h2, p2]
-        return [my_vector_sum([d.berns[k][i] * points[i] for i in range(4)]) for k in range(d.nedges + 1)]
-
-    d = DependantsOfResolution()
 
 #**************************************************************************
 
@@ -1072,15 +927,21 @@ class GlobalList:
     def add_segment(self, segment: Segment):
         self.segments.append(segment)
 
-    def add_many_curves(self, name: str, parent_collection: bpy.types.Collection, context: bpy.types.Context):
+    def add_many_curves(self,
+                        name: str,
+                        source_object: bpy.types.Object,
+                        parent_collection: bpy.types.Collection,
+                        context: bpy.types.Context):
         collection = bpy.data.collections.new(name)
         collection.greg_settings.used_for_greg = True
         parent_collection.children.link(collection)
+        curves_to_copy_mirrors = []
         for segment in self.segments:
             co_s = [p.bpoint.coords for p in (segment.p1, segment.p2)]
             handles_left = [p.handle_left for p in (segment.p1, segment.p2)]
             handles_right = [p.handle_right for p in (segment.p1, segment.p2)]
             curve_obj, curve_prop = add_curve_obj(collection, co_s, handles_left, handles_right)
+            curves_to_copy_mirrors.append(curve_obj)
             for i, p in enumerate((segment.p1, segment.p2)):
                 p.bpoint.created_curves.append((curve_prop.name, i))
         for bpoint in self.big_points:
@@ -1091,6 +952,8 @@ class GlobalList:
             coplanar_collinear(empty_obj, collection)
             for end in empty_obj.greg_empty_settings.curve_ends:
                 add_hook(end, context)
+        for curve_obj in curves_to_copy_mirrors:
+            copy_mirrors_from_one_obj_to_another(source_object, curve_obj)
 
 def print_structure(collection):
     print("collection greg", collection.greg_settings.used_for_greg)
@@ -2513,7 +2376,7 @@ class OBJECT_PT_greg_curve_properties2(bpy.types.Panel):
 class PrintItemInfo(bpy.types.Operator):
     """Gregory: print info about selected curve, arrow or empty"""
     bl_idname = "object.greg_print_info"
-    bl_label = "Print greg item info"         # Display name in the interface.
+    bl_label = "Greg: print greg item info"         # Display name in the interface.
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -2689,37 +2552,45 @@ def make_curve_mirror_bridge(curve, target, other, mirror_obj, axis):
 class MakeCurveMirrorBridge(bpy.types.Operator):
     """Gregory: make curve a bridge through mirror"""
     bl_idname = "object.make_curve_mirror_bridge"
-    bl_label = "Make curve bridge through mirror"         # Display name in the interface.
+    bl_label = "Greg: make curve bridge through mirror"         # Display name in the interface.
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context: bpy.types.Context):
         if context.mode != "OBJECT":
             return False
-        obj = context.active_object
-        if obj is None:
+        selected = context.selected_objects
+        if len(selected) != 2:
             return False
-        if not obj.greg_curve_settings.used_for_greg:
+        curves = [obj for obj in selected if obj.greg_curve_settings.used_for_greg]
+        if len(curves) != 1:
             return False
-        if obj.greg_curve_settings.is_mirror_bridge:
+        curve = curves[0]
+        if curve.greg_curve_settings.is_mirror_bridge:
             return False
-        selection = context.selected_objects
-        if len(selection) != 2:
+        others = [sel for sel in selected if sel != curve]
+        if len(others) != 1:
             return False
-        other = [sel for sel in selection if sel != obj][0]
+        other = others[0]
         if not other.greg_empty_settings.used_for_greg:
             return False
-        if not (other in (obj.greg_curve_settings.end1_empty, obj.greg_curve_settings.end2_empty)):
+        curve_empties = (curve.greg_curve_settings.end1_empty, curve.greg_curve_settings.end2_empty)
+        if not (other in curve_empties):
             return False
-        if check_curve_crosses_mirror(obj):
+        not_target = [empty for empty in curve_empties if empty != other][0]
+        if len(not_target.greg_empty_settings.curve_ends) != 1:
+            return False
+        if check_curve_crosses_mirror(curve):
             return True
         return False
 
     def execute(self, context: bpy.types.Context):        # execute() is called when running the operator.
-        curve = context.active_object
+        # target - empty connected to main structure
+        selected = context.selected_objects
+        curve = [obj for obj in selected if obj.greg_curve_settings.used_for_greg][0]
         i, axis = check_curve_crosses_mirror(curve)
         mirror_obj = curve.modifiers[i].mirror_object
-        target = [sel for sel in context.selected_objects if sel != curve][0]
+        target = [sel for sel in selected if sel != curve][0]
         two_empties = (curve.greg_curve_settings.end1_empty, curve.greg_curve_settings.end2_empty)
         other = [empty for empty in two_empties if empty != target][0]
         target_end_name, other_end_name, target_point, other_point = make_curve_mirror_bridge(curve, target, other, mirror_obj, axis)
@@ -2740,22 +2611,21 @@ def add_bridge_mirror_func(self, context: bpy.types.Context):
 class UnsetCurveMirrorBridge(bpy.types.Operator):
     """Gregory: unset curve a bridge through mirror"""
     bl_idname = "object.unset_curve_mirror_bridge"
-    bl_label = "Unset curve bridge through mirror"         # Display name in the interface.
+    bl_label = "Greg: unset curve bridge through mirror"         # Display name in the interface.
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context: bpy.types.Context):
         if context.mode != "OBJECT":
             return False
-        obj = context.active_object
-        if obj is None:
+        selected = context.selected_objects
+        if len(selected) != 1:
             return False
-        if len(context.selected_objects) != 1:
-            return False
+        obj = selected[0]
         return obj.greg_curve_settings.is_mirror_bridge
 
     def execute(self, context: bpy.types.Context):        # execute() is called when running the operator.
-        curve = context.active_object
+        curve = context.selected_objects[0]
         curve_settings = curve.greg_curve_settings
         curve_settings.is_mirror_bridge = False
         curve_settings.bridge_mirror_object = None
@@ -3799,12 +3669,7 @@ class GlobalForSubdivide:
             handles_right = (middle_point1.handle_right, middle_point2.handle_right)
         curve_obj, _ = add_curve_obj(collection, co_s, handles_left, handles_right)
         i = 1
-        for modifier in obj_for_mirror.modifiers:
-            if modifier.type == 'MIRROR':
-                new_mirror = curve_obj.modifiers.new(f"mirror_{i}", 'MIRROR')
-                new_mirror.mirror_object = modifier.mirror_object
-                new_mirror.use_axis = modifier.use_axis
-                i += 1
+        copy_mirrors_from_one_obj_to_another(obj_for_mirror, curve_obj)
         end1_name = add_curve_end(collection, empty1, curve_obj, 0)
         end2_name = add_curve_end(collection, empty2, curve_obj, 1)
         if is_border1:
@@ -3998,6 +3863,16 @@ class GlobalForSubdivide:
             for is_first in (True, False):
                 self.adjust_free_outers_border(is_horizontal, is_first)
 
+def copy_mirrors_from_one_obj_to_another(obj_with_mirrors: bpy.types.Object,
+                                         obj_without_mirrors: bpy.types.Object):
+    i = 1
+    for modifier in obj_with_mirrors.modifiers:
+        if modifier.type == 'MIRROR':
+            new_mirror = obj_without_mirrors.modifiers.new(f"mirror_{i}", 'MIRROR')
+            new_mirror.mirror_object = modifier.mirror_object
+            new_mirror.use_axis = modifier.use_axis
+            i += 1
+
 def get_approx_bezier_length(co_s: Tuple[mathutils.Vector, mathutils.Vector],
                              handles: Tuple[mathutils.Vector, mathutils.Vector]) -> float:
     points_handles = [co + handle for co, handle in zip(co_s, handles)]
@@ -4161,7 +4036,7 @@ class MirrorSequenceItem:
 class GregSubdivide(bpy.types.Operator):
     """Gregory: subdivide loop of curves"""
     bl_idname = "object.greg_sibdivide"
-    bl_label = "Subdivide loop of curves"         # Display name in the interface.
+    bl_label = "Greg: subdivide loop of curves"         # Display name in the interface.
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -4538,7 +4413,7 @@ def add_print_dot_func(self, context: bpy.types.Context):
 class SetNotPatch(bpy.types.Operator):
     """Gregory: set loop of curves not patch"""
     bl_idname = "object.greg_set_not_patch"
-    bl_label = "greg: set loop not patch"         # Display name in the interface.
+    bl_label = "Greg: set loop not patch"         # Display name in the interface.
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -4585,14 +4460,24 @@ def get_not_face_ids(curve_obj: bpy.types.Object) -> List[Set[str]]:
 class CreateCurvesCollection(bpy.types.Operator):
     """Gregory: create curves"""      # Use this as a tooltip for menu items and buttons.
     bl_idname = "object.greg_create_curves"        # Unique identifier for bu: bpy.types.Contextttons and menu items to reference.
-    bl_label = "Create curves"         # Display name in the interface.
+    bl_label = "Greg: create curves"         # Display name in the interface.
     bl_options = {'REGISTER', 'UNDO'}  # Enable undo for the operator.
 
+    @classmethod
+    def poll(cls, context: bpy.types.Context):
+        if context.mode != "OBJECT":
+            return False
+        selected = context.selected_objects
+        if len(selected) != 1:
+            return False
+        obj = selected[0]
+        return obj.type == "CURVE"
+    
     def execute(self, context: bpy.types.Context):        # execute() is called when running the operator.
 
         glist = GlobalList()
 
-        active = context.active_object
+        active = context.selected_objects[0]
         mb = active.matrix_basis
         active.data.transform(mb)
         active.matrix_basis.identity()
@@ -4608,21 +4493,42 @@ class CreateCurvesCollection(bpy.types.Operator):
                 spline.add_point(p.co, p.handle_left, p.handle_right)
             if s.use_cyclic_u:
                 spline.round_spline()
-        glist.add_many_curves(active.name, active.users_collection[0], context)
+        glist.add_many_curves(active.name, active, get_parent_collection(active), context)
+        bpy.data.objects.remove(active, do_unlink=True)
 
         return {'FINISHED'}            # Lets Blender know the operator finished successfully.
 
 def add_collection_menu_func(self, context: bpy.types.Context):
     self.layout.operator(CreateCurvesCollection.bl_idname)
 
+def get_parent_collection(obj):
+    for coll in obj.users_collection:
+        if bpy.context.scene.user_of_id(coll):
+            return coll
+
 class CreateSurfacesBetweenCurves(bpy.types.Operator):
     """Gregory: create surface"""      # Use this as a tooltip for menu items and buttons.
     bl_idname = "object.greg_create_surfs"        # Unique identifier for bu: bpy.types.Contextttons and menu items to reference.
-    bl_label = "Create surfaces"         # Display name in the interface.
+    bl_label = "Greg: create surfaces"         # Display name in the interface.
     bl_options = {'REGISTER', 'UNDO'}  # Enable undo for the operator.
-
+    
+    @classmethod
+    def poll(cls, context: bpy.types.Context):
+        if context.mode != "OBJECT":
+            return False
+        active = context.active_object
+        if active is None:
+            selected = context.selected_objects
+            if len(selected) != 1:
+                return False
+            active = selected[0]
+        collection = get_greg_collection(active)
+        return collection is not None
+    
     def execute(self, context: bpy.types.Context):        # execute() is called when running the operator.
         active = context.active_object
+        if active is None:
+            active = context.selected_objects[0]
         collection = get_greg_collection(active)
         glist = NewGlobalList(collection)
         glist.prepare_for_greg()
@@ -4734,6 +4640,8 @@ class AddBezierCurve(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context: bpy.types.Context):
+        if context.mode != "OBJECT":
+            return False
         if len(context.selected_objects) != 2:
             return False
         for obj in context.selected_objects:
@@ -4775,6 +4683,8 @@ class SetNotCoplanar(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context: bpy.types.Context):
+        if context.mode != "OBJECT":
+            return False
         selected = context.selected_objects
         if len(selected) < 2:
             return False
@@ -4837,6 +4747,8 @@ class SetCoplanar(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context: bpy.types.Context):
+        if context.mode != "OBJECT":
+            return False
         selected = context.selected_objects
         curves = [obj for obj in selected if obj.greg_curve_settings.used_for_greg]
         empties = [obj for obj in selected if obj.greg_empty_settings.used_for_greg]
@@ -5017,6 +4929,8 @@ class SetCollinear(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context: bpy.types.Context):
+        if context.mode != "OBJECT":
+            return False
         selected = context.selected_objects
         if len(selected) != 2:
             return False
@@ -5102,6 +5016,8 @@ class SetNotCollinear(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context: bpy.types.Context):
+        if context.mode != "OBJECT":
+            return False
         selected = context.selected_objects
         if len(selected) < 2:
             return False
