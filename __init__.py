@@ -2386,7 +2386,7 @@ class OBJECT_PT_greg_curve_properties2(bpy.types.Panel):
 
 class OBJECT_PT_greg_resolution(bpy.types.Panel):
     bl_idname = "OBJECT_PT_greg_resolution"
-    bl_label = "Gregory Mesh Resolution (to update, regenerate the mesh)"
+    bl_label = "Mesh Resolution (to update, regenerate the mesh)"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Gregory"
@@ -4506,7 +4506,7 @@ class CreateCurvesCollection(bpy.types.Operator):
         for spline in obj.data.splines:
             if len(spline.bezier_points) == 0:
                 return False
-        return True
+        return not obj.greg_curve_settings.used_for_greg
     
     def execute(self, context: bpy.types.Context):        # execute() is called when running the operator.
 
