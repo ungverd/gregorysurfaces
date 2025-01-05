@@ -116,12 +116,16 @@ def verify_curve_deleted_or_returned():
                         remove_curve_from_greg_structure(curve_obj, collection)
                         bpy.data.objects.remove(curve_obj, do_unlink=True)
                     else:
-                        settings = curve_obj.greg_curve_settings
-                        for i, (end_name, end_empty) in enumerate(((settings.end1_name, settings.end1_empty),
-                                                                   (settings.end2_name, settings.end2_empty))):
-                            if end_empty.greg_empty_settings.curve_ends.find(end_name) == -1:
-                                repare_end(curve_obj, end_empty, end_name, i)
-                                repare_hooks(end_empty)
+                        splines = curve_obj.data.splines
+                        if len(splines) != 1 or len(splines[0].bezier_points) != 2:
+                            remove_curve_from_greg_structure(curve_obj, collection)
+                        else:
+                            settings = curve_obj.greg_curve_settings
+                            for i, (end_name, end_empty) in enumerate(((settings.end1_name, settings.end1_empty),
+                                                                    (settings.end2_name, settings.end2_empty))):
+                                if end_empty.greg_empty_settings.curve_ends.find(end_name) == -1:
+                                    repare_end(curve_obj, end_empty, end_name, i)
+                                    repare_hooks(end_empty)
                                 
 def repare_end(curve_obj, empty_obj, end_name, i):
     verify_coplanar_and_add(empty_obj, curve_obj, i)
@@ -1327,6 +1331,10 @@ def remove_curve_from_greg_structure(curve_obj: bpy.types.Object, collection: Op
     curve_obj.greg_curve_settings.end2_empty = None
     curve_obj.greg_curve_settings.end1_name = ""
     curve_obj.greg_curve_settings.end2_name = ""
+    if collection in curve_obj.users_collection:
+        parent_collection = bpy.context.scene.collection
+        parent_collection.objects.link(curve_obj)
+        collection.objects.unlink(curve_obj)
     #print("after remove")
     #print_structure(collection)
     #print("****************************")
@@ -2018,7 +2026,7 @@ class NewGlobalList:
             if greg_settings.mesh_obj is None:
                 mesh = bpy.data.meshes.new(name=name + "_Mesh")
                 obj = bpy.data.objects.new(name + "_GeneratedMesh", mesh)
-                context.collection.objects.link(obj)
+                self.collection.objects.link(obj)
                 greg_settings.mesh_obj = obj
                 obj.greg_is_generated = True
             else:
@@ -4506,7 +4514,7 @@ class CreateCurvesCollection(bpy.types.Operator):
         for spline in obj.data.splines:
             if len(spline.bezier_points) == 0:
                 return False
-        return not obj.greg_curve_settings.used_for_greg
+        return get_greg_collection(obj) is None
     
     def execute(self, context: bpy.types.Context):        # execute() is called when running the operator.
 
@@ -5234,6 +5242,7 @@ def register():
     bpy.app.handlers.depsgraph_update_post.append(on_depsgraph_update)
     
 def unregister():
+    print("unregister")
 
     # Remove the hotkey
     for km, kmi in addon_keymaps:
