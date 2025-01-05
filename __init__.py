@@ -16,12 +16,6 @@
 #
 # ##### END GPL LICENSE BLOCK #####
 
-bl_info = {
-    "name": "Create Surfaces Between Curves",
-    "blender": (3, 4, 0),
-    "category": "Object",
-}
-
 from inspect import getouterframes, currentframe
 from itertools import chain
 import bpy
