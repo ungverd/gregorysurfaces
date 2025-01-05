@@ -2354,7 +2354,7 @@ def add_one_curve(curves, is_added, now_curve, end_to_add):
                 return is_added, curve, new_end
     return False
 
-'''def verify_is_closed_path_and_of_length_4(curves: List[bpy.types.Object]):
+def verify_is_closed_path_and_of_length_4(curves: List[bpy.types.Object]):
     is_added = {curve.greg_curve_settings.name: False for curve in curves}
     first_curve = curves[0]
     first_empty = first_curve.greg_curve_settings.end1_empty
@@ -2377,7 +2377,7 @@ def add_one_curve(curves, is_added, now_curve, end_to_add):
         return False
     if possible_curves[first_curve_name] == 0:
         return False
-    return True''' # TODO
+    return True # TODO
 
 def print_end(end):
     print("end:")
@@ -4557,8 +4557,9 @@ class SetNotFace(bpy.types.Operator):
             else:
                 if get_greg_collection(obj) != prev_collection:
                     return False
-        '''if not verify_is_closed_path_and_of_length_4(selected):
-            return False''' # TODO
+        if len(selected) == 4:
+            if not verify_is_closed_path_and_of_length_4(selected):
+                return False
         return True
 
     def execute(self, context: bpy.types.Context):        # execute() is called when running the operator.
