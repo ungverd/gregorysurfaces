@@ -4535,10 +4535,10 @@ class PrintDotInfo(bpy.types.Operator):
 def add_print_dot_func(self, context: bpy.types.Context):
     self.layout.operator(PrintDotInfo.bl_idname)        
 
-class SetNotFace(bpy.types.Operator):
-    """Gregory: set loop of curves not face"""
-    bl_idname = "object.greg_set_not_face"
-    bl_label = "greg: set loop not face"         # Display name in the interface.
+class SetNotPatch(bpy.types.Operator):
+    """Gregory: set loop of curves not patch"""
+    bl_idname = "object.greg_set_not_patch"
+    bl_label = "greg: set loop not patch"         # Display name in the interface.
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -4563,7 +4563,7 @@ class SetNotFace(bpy.types.Operator):
         return True
 
     def execute(self, context: bpy.types.Context):        # execute() is called when running the operator.
-        col = bpy.data.collections.new("NotFaceCollection")
+        col = bpy.data.collections.new("NotPatchCollection")
         col.greg_is_not_face = True
         for obj in context.selected_objects:
             col.objects.link(obj)
@@ -4572,7 +4572,7 @@ class SetNotFace(bpy.types.Operator):
         return {'FINISHED'}
 
 def set_not_face_menu_func(self, context: bpy.types.Context):
-    self.layout.operator(SetNotFace.bl_idname)
+    self.layout.operator(SetNotPatch.bl_idname)
 
 def get_not_face_ids(curve_obj: bpy.types.Object) -> List[Set[str]]:
     not_face_ids_groups = []
@@ -5216,7 +5216,7 @@ addon_keymaps = []
 
 classes = (GregId, GregArrowItem, GregBasicEnd, GregArrow, GregCurveEndItem, GregEmptyItem, GregCurveItem, GregQuad,
            GregPhantomCurveEnd, GregPhantomCurve, GregPhantomBpoint, GregCollectionSettings, GregEmpty ,GregCurve,
-           CreateCurvesCollection, CreateSurfacesBetweenCurves, SetNotFace, PrintItemInfo, MakeCurveMirrorBridge,
+           CreateCurvesCollection, CreateSurfacesBetweenCurves, SetNotPatch, PrintItemInfo, MakeCurveMirrorBridge,
            UnsetCurveMirrorBridge, PrintDotInfo, OBJECT_PT_greg_curve_properties, OBJECT_PT_greg_curve_properties1,
            OBJECT_PT_greg_curve_properties2, GregSubdivide, GregExtrude, GregMergeAtCenter, GregMergeAtFirst,
            GregMergeAtLast, GregMergeSub, AddBezierCurve, SetCoplanar, SetNotCoplanar, SetCollinear, SetNotCollinear)
