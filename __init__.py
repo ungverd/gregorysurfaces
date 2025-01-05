@@ -474,7 +474,7 @@ def add_border(k0: mathutils.Vector,
                 k2: mathutils.Vector,
                 k3: mathutils.Vector,
                 glist: "GlobalList",
-                d: "DependantsOfResolution | DependantsOfResolution_np"):
+                d: "DependantsOfResolution_np"):
     assert isinstance(d, DependantsOfResolution_np)
     if glist.verts is None:
         init_point = 0
@@ -497,7 +497,7 @@ def calc_quad_gregory_verts(kk, kk1, d):
 
 def calc_gregory_surf(kk: List[List[mathutils.Vector]],
                         kk1: List[List[mathutils.Vector]],
-                        d: "DependantsOfResolution_np | DependantsOfResolution",
+                        d: "DependantsOfResolution_np",
                         border1: List[int],
                         border2: List[int],
                         border3: List[int],
@@ -533,7 +533,9 @@ def calc_gregory_surf(kk: List[List[mathutils.Vector]],
     face_corner4: npt.NDArray[np.int64] = np.array([[corner4, border4[d.nedges-2], this_faces[(d.nedges-2)*(d.nedges-3)][3], border3[0]]])
     glist.faces = np.vstack((glist.faces, faces_border1, faces_border2, faces_border3, faces_border4, face_corner1, face_corner2, face_corner3, face_corner4))
 
-d = DependantsOfResolution_np()
+
+dependants_of_resolution_dict: Dict[str, DependantsOfResolution_np] = {}
+#d = DependantsOfResolution_np()
 
 
 #**************************************************************************
@@ -934,6 +936,7 @@ class GlobalList:
                         context: bpy.types.Context):
         collection = bpy.data.collections.new(name)
         collection.greg_settings.used_for_greg = True
+        collection.greg_settings.name = generate_collection_name()
         parent_collection.children.link(collection)
         curves_to_copy_mirrors = []
         for segment in self.segments:
@@ -1998,7 +2001,7 @@ class NewGlobalList:
             if i == 3:
                 return self.extract_vert(quad, 2, 1)
     
-    def render_mesh(self, d: "DependantsOfResolution|DependantsOfResolution_np", name: str, context: bpy.types.Context):
+    def render_mesh(self, d: "DependantsOfResolution_np", name: str, context: bpy.types.Context):
         greg_settings = self.collection.greg_settings
         print("len(greg_settings.phantom_bpoints)", len(greg_settings.phantom_bpoints))
         print("len(greg_settings.phantom_curves)", len(greg_settings.phantom_curves))
@@ -2017,6 +2020,7 @@ class NewGlobalList:
                 obj = bpy.data.objects.new(name + "_GeneratedMesh", mesh)
                 context.collection.objects.link(obj)
                 greg_settings.mesh_obj = obj
+                obj.greg_is_generated = True
             else:
                 obj = greg_settings.mesh_obj
                 mesh = bpy.data.meshes.new(name=name + "_Mesh")
@@ -2160,6 +2164,8 @@ class GregPhantomBpoint(bpy.types.PropertyGroup):
         return mathutils.Vector(self.co_prop)
 
 class GregCollectionSettings(bpy.types.PropertyGroup):
+    name: bpy.props.StringProperty(default="")
+    nedges: bpy.props.IntProperty(default=12)
     used_for_greg: bpy.props.BoolProperty(default=False)
     empties: bpy.props.CollectionProperty(type=GregEmptyItem)
     curves: bpy.props.CollectionProperty(type=GregCurveItem)
@@ -2266,6 +2272,11 @@ def print_end(end):
 
 def cb_update(self, context):
     collection = get_greg_collection(self)
+    d = dependants_of_resolution_dict.get(collection.greg_settings.name)
+    if d is None:
+        d = DependantsOfResolution_np()
+        d.conditional_update(collection.greg_settings.nedges)
+        dependants_of_resolution_dict[collection.greg_settings.name] = d
     quads_done = []
     self_name = self.greg_curve_settings.name
     for phantom_curve_el in self.greg_curve_settings.phantom_curves_ids:
@@ -2288,7 +2299,7 @@ class OBJECT_PT_greg_curve_properties(bpy.types.Panel):
     bl_label = "Gregory Curve Properties"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = "Tool"
+    bl_category = "Gregory"
 
     def draw(self, context):
         layout = self.layout
@@ -2317,7 +2328,7 @@ class OBJECT_PT_greg_curve_properties1(bpy.types.Panel):
     bl_label = "Gregory Curve Properties 1"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = "Tool"
+    bl_category = "Gregory"
 
     def draw(self, context):
         layout = self.layout
@@ -2349,7 +2360,7 @@ class OBJECT_PT_greg_curve_properties2(bpy.types.Panel):
     bl_label = "Gregory Curve Properties 2"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = "Tool"
+    bl_category = "Gregory"
 
     def draw(self, context):
         layout = self.layout
@@ -2372,6 +2383,25 @@ class OBJECT_PT_greg_curve_properties2(bpy.types.Panel):
                     if len(phantom_curve.quads) == 2:
                         return True
         return False
+
+class OBJECT_PT_greg_resolution(bpy.types.Panel):
+    bl_idname = "OBJECT_PT_greg_resolution"
+    bl_label = "Gregory Mesh Resolution (to update, regenerate the mesh)"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Gregory"
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.active_object
+        layout.prop(obj, 'greg_resolution')
+
+    @classmethod    
+    def poll(cls, context):
+        obj = context.active_object
+        if obj is None:
+            return False
+        return obj.greg_is_generated
 
 class PrintItemInfo(bpy.types.Operator):
     """Gregory: print info about selected curve, arrow or empty"""
@@ -4471,7 +4501,12 @@ class CreateCurvesCollection(bpy.types.Operator):
         if len(selected) != 1:
             return False
         obj = selected[0]
-        return obj.type == "CURVE"
+        if not obj.type == "CURVE":
+            return False
+        for spline in obj.data.splines:
+            if len(spline.bezier_points) == 0:
+                return False
+        return True
     
     def execute(self, context: bpy.types.Context):        # execute() is called when running the operator.
 
@@ -4483,8 +4518,6 @@ class CreateCurvesCollection(bpy.types.Operator):
         active.matrix_basis.identity()
 
         cur = active.data
-        nedges = cur.resolution_u
-        d.conditional_update(nedges)
         splines = cur.splines
 
         for s in splines:
@@ -4505,6 +4538,16 @@ def get_parent_collection(obj):
     for coll in obj.users_collection:
         if bpy.context.scene.user_of_id(coll):
             return coll
+
+def generate_collection_name():
+    counter_txt = bpy.data.texts.get(".counter")
+    if counter_txt is None:
+        bpy.data.texts.new(".counter")
+        counter_txt = bpy.data.texts[".counter"]
+        counter_txt["counter"] = 0
+    name = str(counter_txt["counter"])
+    counter_txt["counter"] += 1
+    return name
 
 class CreateSurfacesBetweenCurves(bpy.types.Operator):
     """Gregory: create surface"""      # Use this as a tooltip for menu items and buttons.
@@ -4530,6 +4573,18 @@ class CreateSurfacesBetweenCurves(bpy.types.Operator):
         if active is None:
             active = context.selected_objects[0]
         collection = get_greg_collection(active)
+        prev_nedges = collection.greg_settings.nedges
+        mesh_obj = collection.greg_settings.mesh_obj
+        if mesh_obj is not None:
+            collection.greg_settings.nedges = mesh_obj.greg_resolution
+        d = dependants_of_resolution_dict.get(collection.greg_settings.name)
+        if d is None:
+            d = DependantsOfResolution_np()
+            dependants_of_resolution_dict[collection.greg_settings.name] = d
+            d.conditional_update(collection.greg_settings.nedges)
+        else:
+            if prev_nedges != collection.greg_settings.nedges:
+                d.conditional_update(collection.greg_settings.nedges)
         glist = NewGlobalList(collection)
         glist.prepare_for_greg()
         glist.add_curves_and_bpoints()
@@ -5135,7 +5190,8 @@ classes = (GregId, GregArrowItem, GregBasicEnd, GregArrow, GregCurveEndItem, Gre
            CreateCurvesCollection, CreateSurfacesBetweenCurves, SetNotPatch, PrintItemInfo, MakeCurveMirrorBridge,
            UnsetCurveMirrorBridge, PrintDotInfo, OBJECT_PT_greg_curve_properties, OBJECT_PT_greg_curve_properties1,
            OBJECT_PT_greg_curve_properties2, GregSubdivide, GregExtrude, GregMergeAtCenter, GregMergeAtFirst,
-           GregMergeAtLast, GregMergeSub, AddBezierCurve, SetCoplanar, SetNotCoplanar, SetCollinear, SetNotCollinear)
+           GregMergeAtLast, GregMergeSub, AddBezierCurve, SetCoplanar, SetNotCoplanar, SetCollinear, SetNotCollinear,
+           OBJECT_PT_greg_resolution)
 
 functions_context_menu = (add_collection_menu_func, add_surface_menu_func, set_not_face_menu_func,
                           add_print_info_func, add_bridge_mirror_func, add_unset_bridge_mirror_func,
@@ -5165,6 +5221,8 @@ def register():
     bpy.types.Object.greg_tilt2 = bpy.props.FloatProperty(name="tilt side 2", default=0, update = cb_update)
     bpy.types.Object.greg_is_sharp = bpy.props.BoolProperty(default=False)
     bpy.types.Collection.greg_is_not_face = bpy.props.BoolProperty(default=False)
+    bpy.types.Object.greg_resolution = bpy.props.IntProperty(name="resolution", default=12)
+    bpy.types.Object.greg_is_generated = bpy.props.BoolProperty(default=False)
 
     wm = bpy.context.window_manager
     kc = wm.keyconfigs.addon
@@ -5199,6 +5257,8 @@ def unregister():
     del bpy.types.Object.greg_tilt2
     del bpy.types.Object.greg_is_sharp
     del bpy.types.Collection.greg_is_not_face
+    del bpy.types.Object.greg_resolution
+    del bpy.types.Object.greg_is_generated
 
     for menu_func in functions_context_menu:
         bpy.types.VIEW3D_MT_object_context_menu.remove(menu_func)
