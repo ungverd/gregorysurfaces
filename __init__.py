@@ -18,6 +18,7 @@
 
 from inspect import getouterframes, currentframe
 from itertools import chain
+from uuid import uuid4
 import bpy
 import bmesh
 import mathutils
@@ -4548,14 +4549,7 @@ def get_parent_collection(obj):
             return coll
 
 def generate_collection_name():
-    counter_txt = bpy.data.texts.get(".counter")
-    if counter_txt is None:
-        bpy.data.texts.new(".counter")
-        counter_txt = bpy.data.texts[".counter"]
-        counter_txt["counter"] = 0
-    name = str(counter_txt["counter"])
-    counter_txt["counter"] += 1
-    return name
+    return str(uuid4())
 
 class CreateSurfacesBetweenCurves(bpy.types.Operator):
     """Gregory: create surface"""      # Use this as a tooltip for menu items and buttons.
@@ -5229,7 +5223,7 @@ def register():
     bpy.types.Object.greg_tilt2 = bpy.props.FloatProperty(name="tilt side 2", default=0, update = cb_update)
     bpy.types.Object.greg_is_sharp = bpy.props.BoolProperty(default=False)
     bpy.types.Collection.greg_is_not_face = bpy.props.BoolProperty(default=False)
-    bpy.types.Object.greg_resolution = bpy.props.IntProperty(name="resolution", default=12)
+    bpy.types.Object.greg_resolution = bpy.props.IntProperty(name="resolution (regenerate mesh to update)", default=12)
     bpy.types.Object.greg_is_generated = bpy.props.BoolProperty(default=False)
 
     wm = bpy.context.window_manager
@@ -5242,7 +5236,6 @@ def register():
     bpy.app.handlers.depsgraph_update_post.append(on_depsgraph_update)
     
 def unregister():
-    print("unregister")
 
     # Remove the hotkey
     for km, kmi in addon_keymaps:
