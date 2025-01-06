@@ -2395,7 +2395,7 @@ class OBJECT_PT_greg_curve_properties2(bpy.types.Panel):
 
 class OBJECT_PT_greg_resolution(bpy.types.Panel):
     bl_idname = "OBJECT_PT_greg_resolution"
-    bl_label = "Mesh Resolution (to update, regenerate the mesh)"
+    bl_label = "Mesh Resolution"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Gregory"
@@ -5223,7 +5223,7 @@ def register():
     bpy.types.Object.greg_tilt2 = bpy.props.FloatProperty(name="tilt side 2", default=0, update = cb_update)
     bpy.types.Object.greg_is_sharp = bpy.props.BoolProperty(default=False)
     bpy.types.Collection.greg_is_not_face = bpy.props.BoolProperty(default=False)
-    bpy.types.Object.greg_resolution = bpy.props.IntProperty(name="resolution (regenerate mesh to update)", default=12)
+    bpy.types.Object.greg_resolution = bpy.props.IntProperty(name="resolution (recreate mesh to update)", default=12)
     bpy.types.Object.greg_is_generated = bpy.props.BoolProperty(default=False)
 
     wm = bpy.context.window_manager
