@@ -8,9 +8,9 @@ import numpy.typing as npt
 import bpy
 import mathutils
 
-from commons import same_coords, add_hook, add_curve_obj, add_empty_obj, add_curve_end, coplanar_collinear
-from commons import copy_mirrors_from_one_obj_to_another
-from numpyCalculations import add_corner
+from .commons import same_coords, add_hook, add_curve_obj, add_empty_obj, add_curve_end, coplanar_collinear
+from .commons import copy_mirrors_from_one_obj_to_another
+from .numpyCalculations import add_corner
 
 class Point:
     def __init__(self,

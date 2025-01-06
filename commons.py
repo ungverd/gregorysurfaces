@@ -1,8 +1,10 @@
 from typing import Optional, List
+import math
+
 import bpy
 import mathutils
-import math
-from propertyGroups import GregBasicEnd, GregCurveEndItem
+
+from .propertyGroups import GregBasicEnd, GregCurveEndItem
 
 TH = 0.0001
 TH2 = TH**2

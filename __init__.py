@@ -27,16 +27,16 @@ import bpy
 import bmesh
 import mathutils
 
-from propertyGroups import *
-from commons import TH, TH2, apply_hook, add_hook, mirror_vec_with_vec, mirror_vec, get_greg_collection, are_collinear
-from commons import rotate_end_to_vec, remove_coplanar, same_coords, add_curve_obj, add_empty_obj, add_curve_end
-from commons import coplanar_collinear, check_ends_collinear, extract_vectors_from_ends, are_coplanar
-from commons import add_coplanar_arrow, check_ends_coplanar, extract_end_from_basic_end_and_empty
-from commons import extract_end_from_name_and_empty, extract_vector_from_basic_end
-from OnDepsgraphUpdate import on_depsgraph_update
-from DependantsOfResolution import DependantsOfResolution_np
-from GlobalList import GlobalList, Spline
-from numpyCalculations import calc_gregory_surf, add_border, add_corner, calc_quad_gregory_verts
+from .propertyGroups import *
+from .commons import TH, TH2, apply_hook, add_hook, mirror_vec_with_vec, mirror_vec, get_greg_collection, are_collinear
+from .commons import rotate_end_to_vec, remove_coplanar, same_coords, add_curve_obj, add_empty_obj, add_curve_end
+from .commons import coplanar_collinear, check_ends_collinear, extract_vectors_from_ends, are_coplanar
+from .commons import add_coplanar_arrow, check_ends_coplanar, extract_end_from_basic_end_and_empty
+from .commons import extract_end_from_name_and_empty, extract_vector_from_basic_end
+from .OnDepsgraphUpdate import on_depsgraph_update
+from .DependantsOfResolution import DependantsOfResolution_np
+from .GlobalList import GlobalList, Spline
+from .numpyCalculations import calc_gregory_surf, add_border, add_corner, calc_quad_gregory_verts
 
 
 
@@ -437,7 +437,7 @@ class NewGlobalList:
                    curves_verified,
                    bpoints_verified,
                    first) -> StepRes:
-        if phantom_curve in curves_verified:
+        if not phantom_curve in curves_verified:
             if not phantom_curve.finished:
                 curves_verified.append(phantom_curve)
                 if end_i == 0:
@@ -453,7 +453,6 @@ class NewGlobalList:
                                      end0,
                                      False)
                 curves_verified.pop()
-
                 match res:
                     case StepRes.FINISHED: 
                         return StepRes.FINISHED
@@ -987,9 +986,8 @@ class NewGlobalList:
             if greg_settings.mesh_obj is None:
                 mesh = bpy.data.meshes.new(name=name + "_Mesh")
                 obj = bpy.data.objects.new(name + "_GeneratedMesh", mesh)
-                self.collection.objects.link(obj)
+                context.collection.objects.link(obj)
                 greg_settings.mesh_obj = obj
-                obj.greg_is_generated = True
             else:
                 obj = greg_settings.mesh_obj
                 mesh = bpy.data.meshes.new(name=name + "_Mesh")
@@ -1619,7 +1617,6 @@ class GlobalForSubdivide:
             points_sequence.append(next_point)
             if next_point in all_corresponding_points:
                 if next_point == point:
-                    print(1)
                     return False
                 other_number = next_point.number
                 self.borders[number][other_number] = (len(curves_sequence), curves_sequence.copy(), points_sequence.copy())

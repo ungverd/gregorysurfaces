@@ -1,10 +1,12 @@
 from typing import Optional
 from enum import Enum
+from inspect import getouterframes, currentframe
+
 import bpy
 import mathutils
-from inspect import getouterframes, currentframe
-from commons import apply_hook, add_hook, mirror_vec, get_greg_collection, are_collinear
-from commons import TH2, rotate_end_to_vec, remove_coplanar
+
+from .commons import apply_hook, add_hook, mirror_vec, get_greg_collection, are_collinear
+from .commons import TH2, rotate_end_to_vec, remove_coplanar
 
 mode = [None]
 
