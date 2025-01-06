@@ -1,21 +1,15 @@
 from typing import List, Optional, Tuple
-from enum import Enum
 from uuid import uuid4
-
-import numpy as np
-import numpy.typing as npt
 
 import bpy
 import mathutils
 
 from .commons import same_coords, add_hook, add_curve_obj, add_empty_obj, add_curve_end, coplanar_collinear
 from .commons import copy_mirrors_from_one_obj_to_another
-from .numpyCalculations import add_corner
 
 class Point:
     def __init__(self,
                  i: int,
-                 spline: "Spline",
                  bpoint: "BigPoint",
                  handle_left: mathutils.Vector,
                  handle_right: mathutils.Vector):
@@ -23,7 +17,6 @@ class Point:
         self.i: int = i
         self.prev_seg: Optional[Segment] = None
         self.post_seg: Optional[Segment] = None
-        self.spline: Spline = spline
         self.handle_left = handle_left
         self.handle_right = handle_right
 
@@ -31,9 +24,7 @@ class Point:
 class Spline:
     def __init__(self, glist: "GlobalList"):
         self.points: List[Point] = []
-        self.segments: List[Segment] = []
         self.glist = glist
-        self.glist.add_spline(self)
 
     def add_point(self, coords: mathutils.Vector, handle_left: mathutils.Vector, handle_right: mathutils.Vector):
         i = 0
@@ -49,17 +40,15 @@ class Spline:
                     bpoint = self.glist.get_bpoint(i)
                     added = True
             i += 1
-        point = Point(i-1, self, bpoint, handle_left - coords, handle_right - coords)
+        point = Point(i-1, bpoint, handle_left - coords, handle_right - coords)
         bpoint.add_point(point)
         self.points.append(point)
         p_num = len(self.points)
         if p_num > 1:
-            seg = Segment(self.points[p_num - 2], point, self.glist)
-            self.segments.append(seg)
+            Segment(self.points[p_num - 2], point, self.glist)
 
     def round_spline(self):
-        seg = Segment(self.points[-1], self.points[0], self.glist)
-        self.segments.append(seg)
+        Segment(self.points[-1], self.points[0], self.glist)
 
 
 class Segment:
@@ -70,19 +59,6 @@ class Segment:
         self.p2.prev_seg = self
         self.finished = False
         glist.add_segment(self)
-        
-
-    @staticmethod
-    def iterate_direct(segs: "List[Segment]"):
-        yield segs[0].p1
-        for seg in segs:
-            yield seg.p2
-
-    @staticmethod
-    def iterate_reversed(segs: "List[Segment]"):
-        yield segs[-1].p2
-        for seg in reversed(segs):
-            yield seg.p1
 
 class BigPoint:
     def __init__(self, i: int, coords: mathutils.Vector):
@@ -96,18 +72,12 @@ class BigPoint:
         self.points.append(point)
         self.count += 1
 
-    def add_vert(self, glist: "GlobalList"):
-        add_corner(glist, self.coords)
-
 class GlobalList:
     def __init__(self):
         self.reduced_points: List[mathutils.Vector] = []
         self.big_points: List[BigPoint] = []
         self.count = 0
-        self.splines: List[Spline] = []
         self.segments: List[Segment] = []
-        self.verts: Optional[npt.NDArray[np.float64]] = None
-        self.faces: Optional[npt.NDArray[np.int64]] = None
 
     def create_bpoint(self, coords: mathutils.Vector):
         self.reduced_points.append(coords)
@@ -124,12 +94,6 @@ class GlobalList:
 
     def get_bpoint(self, i: int):
         return self.big_points[i]
-
-    def add_spline(self, spline: Spline):
-        self.splines.append(spline)
-
-    def get_splines(self):
-        return self.splines
 
     def add_segment(self, segment: Segment):
         self.segments.append(segment)

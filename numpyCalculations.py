@@ -6,7 +6,7 @@ import numpy.typing as npt
 import mathutils
 
 from .DependantsOfResolution import DependantsOfResolution_np
-#from .GlobalList import GlobalList
+from .GlobalList import GlobalList
 
 def calc_control_points_np(input1: List[List[mathutils.Vector]],
                             input2: List[List[mathutils.Vector]],
