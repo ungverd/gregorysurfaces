@@ -16,531 +16,31 @@
 #
 # ##### END GPL LICENSE BLOCK #####
 
-from inspect import getouterframes, currentframe
 from itertools import chain
-from uuid import uuid4
-import bpy
-import bmesh
-import mathutils
 from typing import List, Optional, Tuple, Dict, Set
 from enum import Enum
 import math
-
-TH = 0.0001
-TH2 = TH**2
-
-#**************************************************************************
-
-mode = [None]
-
-@bpy.app.handlers.persistent
-def on_depsgraph_update(scene):
-    level = len(getouterframes(currentframe()))
-    if level < 2:
-        now_mode = bpy.context.mode
-        if now_mode == "EDIT_CURVE":
-            if bpy.context.active_object.greg_curve_settings.used_for_greg:
-                if now_mode != mode[0]:
-                    on_curve_enter_edit_mode(bpy.context.active_object)
-                depsgraph = bpy.context.evaluated_depsgraph_get()
-                for update in depsgraph.updates:
-                    if update.is_updated_geometry:
-                        on_curve_edit_mode(bpy.context.active_object)
-        elif now_mode == "OBJECT":
-            verify_curve_deleted_or_returned()
-        if now_mode != mode[0]:
-            mode[0] = now_mode
-
-def on_curve_enter_edit_mode(curve_obj: bpy.types.Object):
-    bpy.ops.object.mode_set(mode='OBJECT')
-    for end_empty in (curve_obj.greg_curve_settings.end1_empty, curve_obj.greg_curve_settings.end2_empty):
-        for end in end_empty.greg_empty_settings.curve_ends:
-            apply_hook(end)
-            add_hook(end)
-    bpy.context.view_layer.objects.active = curve_obj
-    bpy.ops.object.mode_set(mode='EDIT')
-
-def on_curve_edit_mode(curve_obj: bpy.types.Object):
-    if len(curve_obj.data.splines) != 1 or len(curve_obj.data.splines[0].bezier_points) != 2:
-        bpy.ops.object.mode_set(mode='OBJECT')
-        remove_curve_from_greg_structure(curve_obj)
-        bpy.ops.object.mode_set(mode='EDIT')
-        return
-    preserve_points(curve_obj)
-    preserve_coplanar(curve_obj)
-    preserve_collinear(curve_obj)
-    if curve_obj.greg_curve_settings.is_mirror_bridge:
-        preserve_mirror_bridge(curve_obj)
-
-def preserve_mirror_bridge(curve_obj):
-    if curve_obj.greg_curve_settings.bridge_mirror_other_i == 0:
-        p_other = curve_obj.data.splines[0].bezier_points[0]
-        p_target = curve_obj.data.splines[0].bezier_points[1]
-    elif curve_obj.greg_curve_settings.bridge_mirror_other_i == 1:
-        p_other = curve_obj.data.splines[0].bezier_points[1]
-        p_target = curve_obj.data.splines[0].bezier_points[0]
-    p_other.handle_left = mirror_vec(p_target.handle_right,
-                                     curve_obj.greg_curve_settings.bridge_mirror_object,
-                                     curve_obj.greg_curve_settings.bridge_mirror_axis)
-    p_other.handle_right = mirror_vec(p_target.handle_left,
-                                      curve_obj.greg_curve_settings.bridge_mirror_object,
-                                      curve_obj.greg_curve_settings.bridge_mirror_axis)
-
-def verify_arrow_returned(collection):
-    for setting in collection.greg_settings.arrows:
-        arrow_obj = setting.arrow
-        if arrow_obj:
-            if bpy.context.scene.objects.get(arrow_obj.name):
-                arrow_settings = arrow_obj.greg_arrow_settings
-                arrow_name = arrow_settings.name
-                empty_obj = arrow_obj.parent
-                empty_settings = empty_obj.greg_empty_settings
-                if empty_settings.coplanars.find(arrow_name) == -1:
-                    new_arrow_item = empty_settings.coplanars.add()
-                    new_arrow_item.name = arrow_name
-                    new_arrow_item.arrow = arrow_obj
-
-def traverse_tree(t):
-    yield t
-    for child in t.children:
-        yield from traverse_tree(child)
-
-def verify_curve_deleted_or_returned():
-    coll = bpy.context.scene.collection
-    for collection in traverse_tree(coll):
-        if collection.greg_settings.used_for_greg:
-            verify_arrow_returned(collection)
-            for setting in collection.greg_settings.curves:
-                curve_obj = setting.curve
-                if curve_obj:
-                    if not bpy.context.scene.objects.get(curve_obj.name):
-                        remove_curve_from_greg_structure(curve_obj, collection)
-                        bpy.data.objects.remove(curve_obj, do_unlink=True)
-                    else:
-                        splines = curve_obj.data.splines
-                        if len(splines) != 1 or len(splines[0].bezier_points) != 2:
-                            remove_curve_from_greg_structure(curve_obj, collection)
-                        else:
-                            settings = curve_obj.greg_curve_settings
-                            for i, (end_name, end_empty) in enumerate(((settings.end1_name, settings.end1_empty),
-                                                                    (settings.end2_name, settings.end2_empty))):
-                                if end_empty.greg_empty_settings.curve_ends.find(end_name) == -1:
-                                    repare_end(curve_obj, end_empty, end_name, i)
-                                    repare_hooks(end_empty)
-                                
-def repare_end(curve_obj, empty_obj, end_name, i):
-    verify_coplanar_and_add(empty_obj, curve_obj, i)
-    collinear_end = verify_collinear(empty_obj, curve_obj, i)
-    setting = empty_obj.greg_empty_settings.curve_ends.add()
-    setting.basic_end.end = i
-    setting.basic_end.name = end_name
-    setting.basic_end.curve = curve_obj
-    setting.name = end_name
-    setting.empty = empty_obj
-    if collinear_end is not None:
-        c1 = setting.collinear_to.add()
-        c1.name = collinear_end.name
-        c1.curve = collinear_end.basic_end.curve
-        c1.end = collinear_end.basic_end.end
-        for other_basic_end in collinear_end.collinear_to:
-            c1 = setting.collinear_to.add()
-            c1.name = other_basic_end.name
-            c1.curve = other_basic_end.curve
-            c1.end = other_basic_end.end
-            other_end = empty_obj.greg_empty_settings.curve_ends[other_basic_end.name]
-            c2 = other_end.collinear_to.add()
-            c2.end = i
-            c2.name = end_name
-            c2.curve = curve_obj
-        c3 = collinear_end.collinear_to.add()
-        c3.end = i
-        c3.name = end_name
-        c3.curve = curve_obj
-    add_arrow_to_end_in_empty(empty_obj, setting)
-
-class HookRes(Enum):
-    FINE = 1
-    APPLY_AND_ADD = 2
-    ADD = 3
-
-def verify_if_change_hook(modifiers, old_hook_name, new_hook_name):
-    for modifier in modifiers:
-        if modifier.name == new_hook_name:
-            return HookRes.FINE
-        if modifier.name == old_hook_name:
-            return HookRes.APPLY_AND_ADD
-        return HookRes.ADD
-
-def repare_hooks(empty_obj):
-    empty_settings = empty_obj.greg_empty_settings
-    for end in empty_settings.curve_ends:
-        curve = end.basic_end.curve
-        curve_name = curve.greg_curve_settings.name
-        verify_coplanar_and_add(empty_obj, curve, end.basic_end.end)
-        add_arrow_to_end_in_empty(empty_obj, end)
-        if end.is_coplanar and len(end.coplanar_vectors) == 1:
-            arrow = end.coplanar_vectors[0]
-            new_hook_name = f"hook_{curve_name}_{arrow.name}"
-            old_hook_name = f"hook_{curve_name}_{empty_settings.name}" #possible old name
-            res = verify_if_change_hook(curve.modifiers, old_hook_name, new_hook_name)
-            if res == HookRes.ADD:
-                add_hook(end)
-            elif res == HookRes.APPLY_AND_ADD:
-                apply_hook(end)
-                add_hook(end)
-            if end.hook != new_hook_name:
-                end.hook = new_hook_name
-        else:
-            hook_name = f"hook_{curve_name}_{empty_settings.name}"
-            res = verify_if_change_hook(curve.modifiers, None, hook_name)
-            if res == HookRes.ADD:
-                add_hook(end)
-            if end.hook != hook_name:
-                end.hook = hook_name
-
-    
-def verify_collinear(empty, curve, i):
-    p = curve.data.splines[0].bezier_points[i]
-    co = p.co
-    h = p.handle_right if i == 0 else p.handle_left
-    hh = h - co
-    for end in empty.greg_empty_settings.curve_ends:
-        curve2 = end.basic_end.curve
-        i2 = end.basic_end.end
-        p2 = curve2.data.splines[0].bezier_points[i2]
-        co2 = p2.co
-        h2 = p2.handle_right if i2 == 0 else p2.handle_left
-        hh2 = h2 - co2
-        if are_collinear(hh, hh2):
-            return end
-    return None
-
-def add_end_to_arrow(arrow, end_name, i, curve):
-    basic_end = arrow.greg_arrow_settings.coplanars.add()
-    basic_end.name = end_name
-    basic_end.end = i
-    basic_end.curve = curve
-
-def verify_coplanar_and_add(empty, curve, i):
-    if i == 0:
-        end_name = curve.greg_curve_settings.end1_name
-    else:
-        end_name = curve.greg_curve_settings.end2_name
-    for arrow_item in empty.greg_empty_settings.coplanars:
-        expected_modifier_name = f"hook_{curve.greg_curve_settings.name}_{arrow_item.name}"
-        for modifier in curve.modifiers:
-            if modifier.name == expected_modifier_name:
-                add_end_to_arrow(arrow_item.arrow, end_name, i, curve)
-                return
-    '''
-    THIS DOESN'T WORK, BUT MAYBE IN THE FUTURE...
-    depsgraph = bpy.context.evaluated_depsgraph_get()
-    p = curve.evaluated_get(depsgraph).data.splines[0].bezier_points[i]
-    co = p.co
-    h = p.handle_right if i == 0 else p.handle_left
-    hh = h - co
-    for arrow_item in empty.greg_empty_settings.coplanars:
-        arrow = arrow_item.arrow
-        print("here1", end_name)
-        if arrow.greg_arrow_settings.coplanars.find(end_name) == -1:
-            print("here2", end_name)
-            mat = arrow.matrix_world.copy()
-            mat.invert()
-            vec = mathutils.Vector((0,0,1)) @ mat
-            if abs(vec.dot(hh)) < TH:
-                print("here3", end_name)
-                add_end_to_arrow(arrow, end_name, i, curve)
-            else:
-                print("not collin!", end_name, vec.dot(hh), vec, hh, i)
-                for modifier in curve.modifiers:
-                    print(modifier.name)'''
-
-def add_arrow_to_end_in_empty(empty_obj, end):
-    empty = empty_obj.greg_empty_settings
-    for arrow_item in empty.coplanars:
-        arrow_settings = arrow_item.arrow.greg_arrow_settings
-        if arrow_settings.coplanars.find(end.name) != -1:
-            if end.coplanar_vectors.find(arrow_item.name) == -1:
-                new_arrow_item = end.coplanar_vectors.add()
-                new_arrow_item.name = arrow_item.name
-                new_arrow_item.arrow = arrow_item.arrow
-
-
-    
-
-
-
-def preserve_points(curve_obj):
-    # edit mode
-    spline = curve_obj.data.splines[0]
-    settings = curve_obj.greg_curve_settings
-    for i, empty in enumerate((settings.end1_empty, settings.end2_empty)):
-        if (spline.bezier_points[i].co - empty.matrix_world.translation).length_squared > TH2:
-            spline.bezier_points[i].co = empty.matrix_world.translation
-
-def rotate_end_to_vec(vec: mathutils.Vector, basic_end: "GregBasicEnd"):
-    spline = basic_end.curve.data.splines[0]
-    i = basic_end.end
-    p = spline.bezier_points[i]
-    if i == 0:
-        h = p.handle_right - p.co
-    else:
-        h = p.handle_left - p.co
-    if not are_collinear(h, vec):
-        quat = h.rotation_difference(vec)
-        if quat.angle > math.pi / 2:
-            axis, angle = quat.to_axis_angle()
-            new_angle = math.pi - angle
-            new_axis = -1 * axis
-            quat = mathutils.Quaternion(new_axis, new_angle)
-        h.rotate(quat)
-        if i == 0:
-            p.handle_right = h + p.co
-            if p.handle_right_type == "ALIGNED":
-                oh = p.handle_left - p.co
-                oh.rotate(quat)
-                p.handle_left = oh + p.co
-        else:
-            p.handle_left = h + p.co
-            if p.handle_left_type == "ALIGNED":
-                oh = p.handle_right - p.co
-                oh.rotate(quat)
-                p.handle_right = oh + p.co
-
-def preserve_coplanar(curve_obj):
-    # edit mode
-    settings = curve_obj.greg_curve_settings
-    for i, (end_name, empty) in enumerate(((settings.end1_name, settings.end1_empty),
-                                           (settings.end2_name, settings.end2_empty))):
-        end = empty.greg_empty_settings.curve_ends[end_name]
-        if end.is_coplanar:
-            if len(end.coplanar_vectors) == 1:
-                arrow = end.coplanar_vectors[0].arrow
-                mat = arrow.matrix_world.copy()
-                mat.invert()
-                vec = mathutils.Vector((0,0,1)) @ mat
-                p = curve_obj.data.splines[0].bezier_points[i]
-                for ii, handle in enumerate((p.handle_right, p.handle_left)):
-                    h = handle - p.co
-                    project = h.project(vec)
-                    if project.length_squared > TH2:
-                        h2 = h - project
-                        quat = h.rotation_difference(h2)
-                        h.rotate(quat)
-                        if ii == 0:
-                            p.handle_right = h + p.co
-                        else:
-                            p.handle_left = h + p.co
-
-
-def preserve_collinear(curve_obj):
-    # edit mode
-    settings = curve_obj.greg_curve_settings
-    for i, (end_name, empty) in enumerate(((settings.end1_name, settings.end1_empty),
-                                           (settings.end2_name, settings.end2_empty))):
-        end = empty.greg_empty_settings.curve_ends[end_name]
-        if end.is_collinear:
-            spline = end.basic_end.curve.data.splines[0]
-            i = end.basic_end.end
-            p = spline.bezier_points[i]
-            if i == 0:
-                h = p.handle_right - p.co
-            else:
-                h = p.handle_left - p.co
-            for basic_end in end.collinear_to:
-                rotate_end_to_vec(h, basic_end)
-
-def preserve_coplanar_to_two_planes(end):
-    # edit mode
-    if len(end.coplanar_vectors) == 2:
-        arrow1 = end.coplanar_vectors[0].arrow
-        arrow2 = end.coplanar_vectors[1].arrow
-        mat1 = arrow1.matrix_world.copy()
-        mat2 = arrow2.matrix_world.copy()
-        mat1.invert()
-        vec1 = mathutils.Vector((0,0,1)) @ mat1
-        mat2.invert()
-        vec2 = mathutils.Vector((0,0,1)) @ mat2
-        cross = vec1.cross(vec2)
-        rotate_end_to_vec(cross, end.basic_end)
-
-def preserve_coplanar_to_two_planes_object_mode(end):
-    if len(end.coplanar_vectors) == 2:
-        arrow1 = end.coplanar_vectors[0].arrow
-        arrow2 = end.coplanar_vectors[1].arrow
-        mat1 = arrow1.matrix_world.copy()
-        mat2 = arrow2.matrix_world.copy()
-        mat1.invert()
-        vec1 = mathutils.Vector((0,0,1)) @ mat1
-        mat2.invert()
-        vec2 = mathutils.Vector((0,0,1)) @ mat2
-        cross = vec1.cross(vec2)
-        depsgraph = bpy.context.evaluated_depsgraph_get()
-        basic_end = end.basic_end
-        spline = basic_end.curve.evaluated_get(depsgraph).data.splines[0]
-        i = basic_end.end
-        p = spline.bezier_points[i]
-        if i == 0:
-            h = p.handle_right - p.co
-        else:
-            h = p.handle_left - p.co
-        if not are_collinear(h, cross):
-            apply_hook(end)
-            rotate_end_to_vec(cross, end.basic_end)
-            add_hook(end)
-
-#**************************************************************************
-
 import numpy as np
-import numpy.typing as npt
-J_S = np.arange(4)                               # shape (4), [0, 1, 2, 3]
-COMBS = np.array([math.comb(3, j) for j in J_S]) # shape (4), [1, 3, 3, 1]
-class DependantsOfResolution_np:
-    def __init__(self):
-        self.nedges = 0
-        self.v0: npt.NDArray[np.float64]
-        self.u0: npt.NDArray[np.float64]
-        self.v02: npt.NDArray[np.float64]
-        self.u02: npt.NDArray[np.float64]
-        self.uv_div: npt.NDArray[np.float64]
-        self.berns: npt.NDArray[np.float64]
-        self.berns2d: npt.NDArray[np.float64]
-        self.dims1: npt.NDArray[np.float64]
-        self.dims2: npt.NDArray[np.float64]
-    
-    def calculate_faces(self):
-        faces: List[List[int]] = []
-        for i in range(self.nedges-2):
-            for j in range(self.nedges-2):
-                face = [i * (self.nedges - 1) + j]
-                face.append(i * (self.nedges - 1) + j + 1)
-                face.append((i + 1) * (self.nedges - 1) + j + 1)
-                face.append((i + 1) * (self.nedges - 1) + j)
-                faces.append(face)
-        self.faces = np.array(faces)
 
-    def conditional_update(self, nedges: int):
-        if self.nedges != nedges:
-            self.nedges = nedges
-            self.update()
 
-    def update(self):
-        v = np.linspace(0, 1, self.nedges + 1) # shape      (N+1)
-        u = np.expand_dims(v, 1)               # shape (N+1, 1  )
-        self.v0 = v[1:self.nedges]             # shape      (N-1)
-        self.u0 = u[1:self.nedges]             # shape (N-1, 1  )
-        self.v02 = np.expand_dims(np.stack((self.v0, 1-self.v0), 1), axis=(1,3)) # shape      (N-1, 1, 2, 1)
-        self.u02 = np.expand_dims(self.v02, axis=4)                              # shape (N-1, 1  , 2, 1, 1)
-        self.uv_div = self.u02 + self.v02                                        # shape (N-1, N-1, 2, 2, 1)
+import bpy
+import bmesh
+import mathutils
 
-        self.berns = np.expand_dims(COMBS * self.u0**J_S * (1-self.u0)**(3-J_S), axis=1) # shape      (N-1, 1, 4)
-        berns_np_2 = np.expand_dims(self.berns, axis=3)                                  # shape (N-1, 1  , 4, 1)
-        self.berns2 = np.expand_dims(self.berns*berns_np_2, axis=4)                      # shape (N-1, N-1, 4, 4, 1)
+from propertyGroups import *
+from commons import TH, TH2, apply_hook, add_hook, mirror_vec_with_vec, mirror_vec, get_greg_collection, are_collinear
+from commons import rotate_end_to_vec, remove_coplanar, same_coords, add_curve_obj, add_empty_obj, add_curve_end
+from commons import coplanar_collinear, check_ends_collinear, extract_vectors_from_ends, are_coplanar
+from commons import add_coplanar_arrow, check_ends_coplanar, extract_end_from_basic_end_and_empty
+from commons import extract_end_from_name_and_empty, extract_vector_from_basic_end
+from OnDepsgraphUpdate import on_depsgraph_update
+from DependantsOfResolution import DependantsOfResolution_np
+from GlobalList import GlobalList, Spline
+from numpyCalculations import calc_gregory_surf, add_border, add_corner, calc_quad_gregory_verts
 
-        # numpy magic to get products of all combinations of Bernstein coefficients
-
-        self.dims1 = np.empty((self.nedges-1, self.nedges-1, 1, 2, 3))
-        self.dims2 = np.empty((self.nedges-1, self.nedges-1, 4, 1, 3))
-        self.calculate_faces()
-
-def calc_control_points_np(input1: List[List[mathutils.Vector]],
-                            input2: List[List[mathutils.Vector]],
-                            d: DependantsOfResolution_np):
-    full = np.array(input1)                     # shape           (4, 4, 3)
-    cp_u = full[1:3, 1:3, :]                    # shape           (2, 2, 3)
-    cp_v = np.array(input2)                     # shape           (2, 2, 3)
-    cp_central = (cp_u*d.v02 + cp_v*d.u02) / d.uv_div # shape (N-1, N-1, 2, 2, 3)
-
-    top, _ = np.broadcast_arrays(full[0, 1:3], d.dims1)        # shape (N-1, N-1, 1, 2, 3)
-    bottom, _ = np.broadcast_arrays(full[3, 1:3], d.dims1)     # shape (N-1, N-1, 1, 2, 3)
-    res1 = np.concatenate((top, cp_central, bottom), axis=2) # shape (N-1, N-1, 4, 2, 3)
-    left, _ = np.broadcast_arrays(np.expand_dims(full[:, 0], axis=1), d.dims2)  # shape (N-1, N-1, 4, 1, 3)
-    right, _ = np.broadcast_arrays(np.expand_dims(full[:, 3], axis=1), d.dims2) # shape (N-1, N-1, 4, 1, 3)
-    res2 = np.concatenate((left, res1, right), axis=3)  # shape (N-1, N-1, 4, 4, 3)
-    return res2
-
-def calc_bezier_curve_np(k0: mathutils.Vector,
-                        k1: mathutils.Vector,
-                        k2: mathutils.Vector,
-                        k3: mathutils.Vector,
-                        d: DependantsOfResolution_np):
-    ks = np.array([k0, k1, k2, k3]).T # shape (3, 4)
-    return np.sum(d.berns * ks, 2) # shape (N-1, 3)
-
-def add_corner(glist: "GlobalList", coords: mathutils.Vector):
-    if glist.verts is None:
-        glist.verts = np.array([coords])
-    else:
-        assert isinstance(glist.verts, np.ndarray)
-        glist.verts = np.vstack((glist.verts, np.array([coords])))
-
-def add_border(k0: mathutils.Vector,
-                k1: mathutils.Vector,
-                k2: mathutils.Vector,
-                k3: mathutils.Vector,
-                glist: "GlobalList",
-                d: "DependantsOfResolution_np"):
-    assert isinstance(d, DependantsOfResolution_np)
-    if glist.verts is None:
-        init_point = 0
-    else:
-        init_point = len(glist.verts)
-    border = list(range(init_point, init_point + d.nedges - 1))
-    border_coords = calc_bezier_curve_np(k0, k1, k2, k3, d)
-    if glist.verts is None:
-        glist.verts = border_coords
-    else:
-        assert isinstance(glist.verts, np.ndarray)
-        glist.verts = np.vstack((glist.verts, border_coords))
-    return border
-
-def calc_quad_gregory_verts(kk, kk1, d):
-    control_points = calc_control_points_np(kk, kk1, d)
-    res: npt.NDArray[np.float64] = np.sum((d.berns2 * control_points), (2, 3)).reshape((d.nedges-1) * (d.nedges-1), 3)
-    # numpy representation of the formula p(u,v) = sum_i_from_0_to_3(sum_j_from_0_to_3( k(i,j)*B(i,u)*B(j,v) ))
-    return res
-
-def calc_gregory_surf(kk: List[List[mathutils.Vector]],
-                        kk1: List[List[mathutils.Vector]],
-                        d: "DependantsOfResolution_np",
-                        border1: List[int],
-                        border2: List[int],
-                        border3: List[int],
-                        border4: List[int],
-                        corner1: int,
-                        corner2: int,
-                        corner3: int,
-                        corner4: int,
-                        glist: "GlobalList") -> None:
-    assert isinstance(d, DependantsOfResolution_np)
-    res = calc_quad_gregory_verts(kk, kk1, d)
-    # numpy representation of the formula p(u,v) = sum_i_from_0_to_3(sum_j_from_0_to_3( k(i,j)*B(i,u)*B(j,v) ))
-    if glist.verts is None:
-        glist.verts = res
-        num_points = 0
-    else:
-        assert isinstance(glist.verts, np.ndarray)
-        num_points = len(glist.verts)
-        glist.verts = np.vstack((glist.verts, res))
-    this_faces = d.faces + num_points
-    if glist.faces is None:
-        glist.faces = this_faces
-    else:
-        assert isinstance(glist.faces, np.ndarray)
-        glist.faces = np.vstack((glist.faces, this_faces))
-    faces_border4: npt.NDArray[np.int64] = np.array([[border4[i+1], border4[i], this_faces[i*(d.nedges-2)][0], this_faces[i*(d.nedges-2)][3]] for i in range(d.nedges-2)])
-    faces_border1: npt.NDArray[np.int64] = np.array([[border1[i], border1[i+1], this_faces[i][1], this_faces[i][0]] for i in range(d.nedges-2)])
-    faces_border2: npt.NDArray[np.int64] = np.array([[border2[i], border2[i+1], this_faces[i*(d.nedges-2)+d.nedges-3][2], this_faces[i*(d.nedges-2)+d.nedges-3][1]] for i in range(d.nedges-2)])
-    faces_border3: npt.NDArray[np.int64] = np.array([[border3[i+1], border3[i], this_faces[(d.nedges-2)*(d.nedges-3)+i][3], this_faces[(d.nedges-2)*(d.nedges-3)+i][2]] for i in range(d.nedges-2)])
-    face_corner1: npt.NDArray[np.int64] = np.array([[corner1, border1[0], this_faces[0][0], border4[0]]])
-    face_corner2: npt.NDArray[np.int64] = np.array([[corner2, border2[0], this_faces[d.nedges-3][1], border1[d.nedges-2]]])
-    face_corner3: npt.NDArray[np.int64] = np.array([[corner3, border3[d.nedges-2], this_faces[(d.nedges-2)*(d.nedges-2)-1][2], border2[d.nedges-2]]])
-    face_corner4: npt.NDArray[np.int64] = np.array([[corner4, border4[d.nedges-2], this_faces[(d.nedges-2)*(d.nedges-3)][3], border3[0]]])
-    glist.faces = np.vstack((glist.faces, faces_border1, faces_border2, faces_border3, faces_border4, face_corner1, face_corner2, face_corner3, face_corner4))
 
 
 dependants_of_resolution_dict: Dict[str, DependantsOfResolution_np] = {}
-#d = DependantsOfResolution_np()
 
 
 #**************************************************************************
@@ -723,12 +223,6 @@ def grid_fill(verts1: List[mathutils.Vector],
             v_grid[(y * xtot) + x] = co
     return v_grid
 
-def are_coplanar(v1: mathutils.Vector, v2: mathutils.Vector, v3: mathutils.Vector) -> bool:
-    return abs(mathutils.Matrix((v1.normalized(), v2.normalized(), v3.normalized())).determinant()) < TH
-
-def are_collinear(v1: mathutils.Vector, v2: mathutils.Vector) -> bool:
-    return (v1.normalized().cross(v2.normalized())).length < TH
-
 #*******************************************************************************************
 
 def get_coefs(e1: mathutils.Vector, e2: mathutils.Vector, x: mathutils.Vector):
@@ -743,101 +237,8 @@ def get_coefs(e1: mathutils.Vector, e2: mathutils.Vector, x: mathutils.Vector):
     b = (e1e1*e2x - e1e2*e1x) * coef
     return (a, b)
 
-def same_coords(c1: mathutils.Vector, c2: mathutils.Vector) -> bool:
-    return (c1-c2).length_squared < TH2
-
-class StepRes(Enum):
-    FINISHED = 1
-    NOT_FINISHED = 2
-    PART_FINISHED = 3
-
-class BigPoint:
-    def __init__(self, i: int, coords: mathutils.Vector):
-        self.points: List[Point] = []
-        self.i = i
-        self.count = 0
-        self.coords = coords
-        self.created_curves: List[Tuple[str, int]] = []
-
-    def add_point(self, point: "Point"):
-        self.points.append(point)
-        self.count += 1
-
-    def add_vert(self, glist: "GlobalList"):
-        add_corner(glist, self.coords)
 
 
-class Point:
-    def __init__(self,
-                 i: int,
-                 spline: "Spline",
-                 bpoint: "BigPoint",
-                 handle_left: mathutils.Vector,
-                 handle_right: mathutils.Vector):
-        self.bpoint: BigPoint = bpoint
-        self.i: int = i
-        self.prev_seg: Optional[Segment] = None
-        self.post_seg: Optional[Segment] = None
-        self.spline: Spline = spline
-        self.handle_left = handle_left
-        self.handle_right = handle_right
-
-
-class Spline:
-    def __init__(self, glist: "GlobalList"):
-        self.points: List[Point] = []
-        self.segments: List[Segment] = []
-        self.glist = glist
-        self.glist.add_spline(self)
-
-    def add_point(self, coords: mathutils.Vector, handle_left: mathutils.Vector, handle_right: mathutils.Vector):
-        i = 0
-        added = False
-        count = self.glist.get_count()
-        bpoint = BigPoint(-1, mathutils.Vector((0, 0, 0))) # placeholder
-        while not added:
-            if i == count:
-                bpoint = self.glist.create_bpoint(coords)
-                added = True
-            else:
-                if same_coords(coords, self.glist.get_coords(i)):
-                    bpoint = self.glist.get_bpoint(i)
-                    added = True
-            i += 1
-        point = Point(i-1, self, bpoint, handle_left - coords, handle_right - coords)
-        bpoint.add_point(point)
-        self.points.append(point)
-        p_num = len(self.points)
-        if p_num > 1:
-            seg = Segment(self.points[p_num - 2], point, self.glist)
-            self.segments.append(seg)
-
-    def round_spline(self):
-        seg = Segment(self.points[-1], self.points[0], self.glist)
-        self.segments.append(seg)
-
-
-class Segment:
-    def __init__(self, p1: Point, p2: Point, glist: "GlobalList"):
-        self.p1 = p1
-        self.p2 = p2
-        self.p1.post_seg = self
-        self.p2.prev_seg = self
-        self.finished = False
-        glist.add_segment(self)
-        
-
-    @staticmethod
-    def iterate_direct(segs: "List[Segment]"):
-        yield segs[0].p1
-        for seg in segs:
-            yield seg.p2
-
-    @staticmethod
-    def iterate_reversed(segs: "List[Segment]"):
-        yield segs[-1].p2
-        for seg in reversed(segs):
-            yield seg.p1
 
 
 def get_y_normalized(p: mathutils.Vector, x: mathutils.Vector):
@@ -899,69 +300,7 @@ def make_collinear(v1: mathutils.Vector, v2: mathutils.Vector):
     return new_v1, new_v2
 
 
-class GlobalList:
-    def __init__(self):
-        self.reduced_points: List[mathutils.Vector] = []
-        self.big_points: List[BigPoint] = []
-        self.count = 0
-        self.splines: List[Spline] = []
-        self.segments: List[Segment] = []
-        self.verts: Optional[List[mathutils.Vector] | npt.NDArray[np.float64]] = None
-        self.faces: Optional[List[List[int]] | npt.NDArray[np.int64]] = None
 
-    def create_bpoint(self, coords: mathutils.Vector):
-        self.reduced_points.append(coords)
-        bpoint = BigPoint(self.count, coords)
-        self.big_points.append(bpoint)
-        self.count += 1
-        return bpoint
-
-    def get_count(self):
-        return self.count
-
-    def get_coords(self, i: int):
-        return self.reduced_points[i]
-
-    def get_bpoint(self, i: int):
-        return self.big_points[i]
-
-    def add_spline(self, spline: Spline):
-        self.splines.append(spline)
-
-    def get_splines(self):
-        return self.splines
-
-    def add_segment(self, segment: Segment):
-        self.segments.append(segment)
-
-    def add_many_curves(self,
-                        name: str,
-                        source_object: bpy.types.Object,
-                        parent_collection: bpy.types.Collection,
-                        context: bpy.types.Context):
-        collection = bpy.data.collections.new(name)
-        collection.greg_settings.used_for_greg = True
-        collection.greg_settings.name = generate_collection_name()
-        parent_collection.children.link(collection)
-        curves_to_copy_mirrors = []
-        for segment in self.segments:
-            co_s = [p.bpoint.coords for p in (segment.p1, segment.p2)]
-            handles_left = [p.handle_left for p in (segment.p1, segment.p2)]
-            handles_right = [p.handle_right for p in (segment.p1, segment.p2)]
-            curve_obj, curve_prop = add_curve_obj(collection, co_s, handles_left, handles_right)
-            curves_to_copy_mirrors.append(curve_obj)
-            for i, p in enumerate((segment.p1, segment.p2)):
-                p.bpoint.created_curves.append((curve_prop.name, i))
-        for bpoint in self.big_points:
-            empty_obj = add_empty_obj(collection, bpoint.coords)
-            for name, i in bpoint.created_curves:
-                curve_obj = collection.greg_settings.curves[name].curve
-                add_curve_end(collection, empty_obj, curve_obj, i)
-            coplanar_collinear(empty_obj, collection)
-            for end in empty_obj.greg_empty_settings.curve_ends:
-                add_hook(end, context)
-        for curve_obj in curves_to_copy_mirrors:
-            copy_mirrors_from_one_obj_to_another(source_object, curve_obj)
 
 def print_structure(collection):
     print("collection greg", collection.greg_settings.used_for_greg)
@@ -1009,356 +348,12 @@ def print_structure(collection):
             print("    basic end name", basic_end.name)
             print("    basic end curve name", basic_end.curve.greg_curve_settings.name)
 
-def add_empty_obj(collection, co):
-    empty_obj = bpy.data.objects.new("greg_empty", None)
-    empty_obj.location = co
-    empty_obj.greg_empty_settings.used_for_greg = True
-    empty_obj.greg_empty_settings.name = get_next_id(collection)
-    empty_prop = collection.greg_settings.empties.add()
-    empty_prop.name = empty_obj.greg_empty_settings.name
-    empty_prop.empty = empty_obj
-    collection.objects.link(empty_obj)
-    return empty_obj
 
-def add_curve_obj(collection, co_s, handles_left, handles_right):
-    curve = bpy.data.curves.new(name="greg_curve", type='CURVE')
-    curve.dimensions = '3D'
-    spline = curve.splines.new("BEZIER")
-    spline.bezier_points.add(1)
-    for i, (co, handle_left, handle_right) in enumerate(zip(co_s, handles_left, handles_right)):
-        spline.bezier_points[i].co = co
-        spline.bezier_points[i].handle_left = co + handle_left
-        spline.bezier_points[i].handle_right = co + handle_right
-        if are_collinear(handle_left, handle_right) and handle_left.dot(handle_right) < 0:
-            spline.bezier_points[i].handle_left_type = 'ALIGNED'
-            spline.bezier_points[i].handle_right_type = 'ALIGNED'
-        else:
-            spline.bezier_points[i].handle_left_type = 'FREE'
-            spline.bezier_points[i].handle_right_type = 'FREE'
-    curve_obj = bpy.data.objects.new(name="greg_curve_obj", object_data=curve)
-    curve_obj.greg_curve_settings.used_for_greg = True
-    curve_obj.greg_curve_settings.name = get_next_id(collection)
-    constraint = curve_obj.constraints.new(type="LIMIT_LOCATION")
-    constraint.owner_space = "WORLD"
-    constraint.max_x = 0
-    constraint.max_y = 0
-    constraint.max_z = 0
-    constraint.min_x = 0
-    constraint.min_y = 0
-    constraint.min_z = 0
-    constraint.use_max_x = True
-    constraint.use_max_y = True
-    constraint.use_max_z = True
-    constraint.use_min_x = True
-    constraint.use_min_y = True
-    constraint.use_min_z = True
-    constraint.enabled = True
-    curve_prop = collection.greg_settings.curves.add()
-    curve_prop.name = curve_obj.greg_curve_settings.name
-    curve_prop.curve = curve_obj
-    collection.objects.link(curve_obj)
-    return curve_obj, curve_prop # DANGER! Do not create new curve_prop while you are using this one
+class StepRes(Enum):
+    FINISHED = 1
+    NOT_FINISHED = 2
+    PART_FINISHED = 3
 
-def add_curve_end(collection, empty_obj, curve_obj, i):
-    curve_end = empty_obj.greg_empty_settings.curve_ends.add()
-    curve_end.basic_end.curve = curve_obj
-    curve_end.basic_end.end = i
-    curve_end.empty = empty_obj
-    curve_end.name = get_next_id(collection)
-    curve_end.basic_end.name = curve_end.name
-    if i == 0:
-        curve_obj.greg_curve_settings.end1_name = curve_end.name
-        curve_obj.greg_curve_settings.end1_empty = empty_obj
-    else:
-        curve_obj.greg_curve_settings.end2_name = curve_end.name
-        curve_obj.greg_curve_settings.end2_empty = empty_obj
-    return curve_end.name
-
-def coplanar_collinear(empty: bpy.types.Object, collection: bpy.types.Collection):
-    for i, end1 in enumerate(empty.greg_empty_settings.curve_ends):
-        for end2 in empty.greg_empty_settings.curve_ends[:i]:
-            check_ends_collinear(end1, end2)
-    collinear_groups = []
-    used_dict = {end.name: False for end in empty.greg_empty_settings.curve_ends}
-    for end in empty.greg_empty_settings.curve_ends:
-        if not end.is_collinear:
-            collinear_groups.append([end])
-        else:
-            if used_dict[end.name] == False:
-                used_dict[end.name] = True
-                collinear_groups.append([end])
-                for basic_end in end.collinear_to:
-                    collinear_end_name = basic_end.name
-                    used_dict[collinear_end_name] = True
-                    collinear_groups[-1].append(empty.greg_empty_settings.curve_ends[collinear_end_name])
-    sets_and_vectors = []
-    for i, ends1 in enumerate(collinear_groups):
-        for j, ends2 in enumerate(collinear_groups[:i]):
-            for ends3 in collinear_groups[:j]:
-                res = check_ends_coplanar(ends1, ends2, ends3, empty, collection)
-                if res is not None:
-                    sets_and_vectors.append((set(ends1).union(set(ends2)).union(set(ends3)), res))
-    final_sets_and_vectors = []
-    for se, vec in sets_and_vectors:
-        i = 0
-        added = False
-        while i < len(final_sets_and_vectors) and not added:
-            if are_collinear(vec, final_sets_and_vectors[i][1]):
-                final_sets_and_vectors[i][0] = final_sets_and_vectors[i][0].union(se)
-                added = True
-            i += 1
-        if not added:
-            final_sets_and_vectors.append([se.copy(), vec])
-    for se, vec in final_sets_and_vectors:
-        add_coplanar_arrow(se, vec, empty, collection)
-
-def extract_vectors_from_ends(ends: List["GregCurveEndItem"]):
-    handles: List[mathutils.Vector] = []
-    for end in ends:
-        handles.append(extract_vector_from_basic_end(end.basic_end))
-    return handles
-
-def extract_vector_from_basic_end(basic_end: "GregBasicEnd"):
-    spline = basic_end.curve.data.splines[0]
-    i = basic_end.end
-    point = spline.bezier_points[i]
-    co = point.co
-    if i == 0:
-        ha = point.handle_right
-    else:
-        ha = point.handle_left
-    return ha - co
-
-def check_ends_collinear(end1: "GregCurveEndItem", end2: "GregCurveEndItem"):
-    ends = (end1, end2)
-    handles = extract_vectors_from_ends(ends)
-    if are_collinear(*handles):
-        common_empty = end1.empty
-        set_ends_collinear_to_one_another(end1, end2, common_empty)
-
-def check_ends_coplanar(ends1, ends2, ends3, empty, collection: bpy.types.Collection):
-    handles: List[mathutils.Vector] = []
-    ends = (ends1[0], ends2[0], ends3[0])
-    handles = extract_vectors_from_ends(ends)
-    if are_coplanar(*handles):
-        coplanar_vector = (handles[0].cross(handles[1])).normalized()
-        return coplanar_vector
-    return None
-
-def add_coplanar_arrow(set_ends, coplanar_vector: mathutils.Vector, empty: bpy.types.Object, collection: bpy.types.Collection):
-    feasible = True
-    for end in set_ends:
-        if len(end.coplanar_vectors) >= 2:
-            feasible = False
-    if feasible:
-        name = get_next_id(collection)
-        arrow = bpy.data.objects.new("greg_arrow", None)
-        arrow.greg_arrow_settings.name = name
-        arrow.greg_arrow_settings.used_for_greg = True
-        empty_arrow_settings = empty.greg_empty_settings.coplanars.add()
-        empty_arrow_settings.name = name
-        empty_arrow_settings.arrow = arrow
-        collection_arrow_settings = collection.greg_settings.arrows.add()
-        collection_arrow_settings.name = name
-        collection_arrow_settings.arrow = arrow
-        arrow.parent = empty
-        arrow.empty_display_type = "SINGLE_ARROW"
-        collection.objects.link(arrow)
-        vec = mathutils.Vector((0,0,1)) @ arrow.matrix_parent_inverse
-        vec.normalize()
-        quat = vec.rotation_difference(coplanar_vector)
-        arrow.rotation_mode = "QUATERNION"
-        arrow.rotation_quaternion = quat
-        constraint = arrow.constraints.new(type="LIMIT_LOCATION")
-        constraint.owner_space = "LOCAL"
-        constraint.max_x = 0
-        constraint.max_y = 0
-        constraint.max_z = 0
-        constraint.min_x = 0
-        constraint.min_y = 0
-        constraint.min_z = 0
-        constraint.use_max_x = True
-        constraint.use_max_y = True
-        constraint.use_max_z = True
-        constraint.use_min_x = True
-        constraint.use_min_y = True
-        constraint.use_min_z = True
-        constraint.enabled = True
-        for end in set_ends:
-            end_setting = end.coplanar_vectors.add()
-            end_setting.arrow = arrow
-            end_setting.name = name
-            arrow_setting = arrow.greg_arrow_settings.coplanars.add()
-            arrow_setting.name = end.name
-            arrow_setting.curve = end.basic_end.curve
-            arrow_setting.end = end.basic_end.end
-   
-def get_next_id(collection: bpy.types.Collection):
-    name = str(collection.greg_settings.max_id)
-    collection.greg_settings.max_id += 1
-    return name
-
-def get_all_possible_hooks(end):
-    curve_obj = end.basic_end.curve
-    curve_name = curve_obj.greg_curve_settings.name
-    empty_obj = end.empty
-    empty_name = empty_obj.greg_empty_settings.name
-    res = [f"hook_{curve_name}_{empty_name}"]
-    for coplanar in empty_obj.greg_empty_settings.coplanars:
-        res.append(f"hook_{curve_name}_{coplanar.name}")
-    return res
-
-def add_hook(end, context: Optional[bpy.types.Context]=None):
-    #requires Object mode
-    if context is None:
-        context = bpy.context
-    curve_obj = end.basic_end.curve
-    if bpy.context.scene.objects.get(curve_obj.name):
-        i = end.basic_end.end
-        if end.is_coplanar and len(end.coplanar_vectors) == 1:
-            empty_to_link = end.coplanar_vectors[0].arrow
-            empty_name = empty_to_link.greg_arrow_settings.name
-        else:
-            empty_to_link = end.empty
-            empty_name = empty_to_link.greg_empty_settings.name
-        curve_name = curve_obj.greg_curve_settings.name
-        hook_name = f"hook_{curve_name}_{empty_name}"
-        possible_hooks = get_all_possible_hooks(end)
-        for modifier in curve_obj.modifiers:
-            if modifier.name == hook_name: #modifier exists
-                return
-            if modifier.name in possible_hooks:
-                context.view_layer.objects.active = curve_obj
-                bpy.ops.object.modifier_apply(modifier=modifier.name)
-        hook = curve_obj.modifiers.new(name=hook_name, type='HOOK')
-        hook.vertex_indices_set([i*3, i*3+1, i*3+2])
-        context.evaluated_depsgraph_get()
-        hook.object = empty_to_link
-        end.hook = hook.name
-        curve_obj.modifiers.move(len(curve_obj.modifiers) - 1, 0) # move new modifier to the first position
-                                                                  # to be before mirror modifiers if there are any
-
-def apply_hook(end, context: Optional[bpy.types.Context]=None):
-    #requires Object mode
-    curve_obj = end.basic_end.curve
-    if context is None:
-        context = bpy.context
-    if context.scene.objects.get(curve_obj.name):
-        context.view_layer.objects.active = curve_obj
-        hook_name = end.hook
-        for modifier in curve_obj.modifiers:
-            if modifier.name == hook_name:
-                bpy.ops.object.modifier_apply(modifier=hook_name)
-                return
-
-def get_coplanar_groups_num(arrow: bpy.types.Object):
-    empty = arrow.parent
-    added = {basic_end.name: False for basic_end in arrow.greg_arrow_settings.coplanars}
-    counter = 0
-    for basic_end in arrow.greg_arrow_settings.coplanars:
-        bn = basic_end.name
-        if not added[bn]:
-            added[bn] = True
-            end = empty.greg_empty_settings.curve_ends[bn]
-            counter += 1
-            if end.is_collinear:
-                for other_basic_end in end.collinear_to:
-                    obn = other_basic_end.name
-                    added[obn] = True
-    return counter
-
-def get_greg_collection(obj: bpy.types.Object) -> Optional[bpy.types.Collection]:
-    for collection in obj.users_collection:
-        if collection.greg_settings.used_for_greg:
-            return collection
-    return None
-
-def remove_coplanar(end: "GregCurveEndItem", end_name: str, empty: bpy.types.Object, collection: bpy.types.Collection):
-    for arrow_item in end.coplanar_vectors:
-        arrow = arrow_item.arrow
-        arrow_name = arrow_item.name
-        end_setting = arrow.greg_arrow_settings.coplanars.find(end_name)
-        arrow.greg_arrow_settings.coplanars.remove(end_setting)
-        groups_num = get_coplanar_groups_num(arrow)
-        if groups_num < 3:
-            empty_setting = empty.greg_empty_settings.coplanars.find(arrow_name)
-            empty.greg_empty_settings.coplanars.remove(empty_setting)
-            collection_setting = collection.greg_settings.arrows.find(arrow_name)
-            collection.greg_settings.arrows.remove(collection_setting)
-            for basic_end in arrow.greg_arrow_settings.coplanars:
-                other_end = empty.greg_empty_settings.curve_ends[basic_end.name]
-                other_end_setting = other_end.coplanar_vectors.find(arrow_name)
-                other_end.coplanar_vectors.remove(other_end_setting)
-                if len(other_end.coplanar_vectors) == 0:
-                    if other_end.name != end_name:
-                        apply_hook(other_end)
-                        add_hook(other_end)
-            bpy.data.objects.remove(arrow, do_unlink=True)
-
-def remove_curve_from_greg_structure(curve_obj: bpy.types.Object, collection: Optional[bpy.types.Collection] = None):
-    #print("before remove")
-    #print_structure(collection)
-    #print("****************************")
-    #requires Object mode
-    curve_obj.greg_curve_settings.used_for_greg = False
-    curve_name = curve_obj.greg_curve_settings.name
-    if collection is None:
-        collection = get_greg_collection(curve_obj)
-    end1_empty = curve_obj.greg_curve_settings.end1_empty
-    end2_empty = curve_obj.greg_curve_settings.end2_empty
-    end1_name = curve_obj.greg_curve_settings.end1_name
-    end2_name = curve_obj.greg_curve_settings.end2_name
-    for empty, end_name in ((end1_empty, end1_name), (end2_empty, end2_name)):
-        #print("some ends", [end.name for end in empty.greg_empty_settings.curve_ends])
-        end = empty.greg_empty_settings.curve_ends[end_name]
-        apply_hook(end)
-        empty_name = empty.greg_empty_settings.name
-        if end.is_collinear:
-            for other_basic_end in end.collinear_to:
-                other_end = empty.greg_empty_settings.curve_ends[other_basic_end.name]
-                other_end.collinear_to.remove(other_end.collinear_to.find(end_name))
-        if end.is_coplanar:
-            remove_coplanar(end, end_name, empty, collection)
-        empty_setting = empty.greg_empty_settings.curve_ends.find(end_name)
-        empty.greg_empty_settings.curve_ends.remove(empty_setting)
-        if len(empty.greg_empty_settings.curve_ends) == 0:
-            collection_setting = collection.greg_settings.empties.find(empty_name)
-            collection.greg_settings.empties.remove(collection_setting)
-            bpy.data.objects.remove(empty, do_unlink=True)
-    collection_setting = collection.greg_settings.curves.find(curve_name)
-    collection.greg_settings.curves.remove(collection_setting)
-    curve_obj.greg_curve_settings.name = ""
-    curve_obj.greg_curve_settings.end1_empty = None
-    curve_obj.greg_curve_settings.end2_empty = None
-    curve_obj.greg_curve_settings.end1_name = ""
-    curve_obj.greg_curve_settings.end2_name = ""
-    if collection in curve_obj.users_collection:
-        parent_collection = bpy.context.scene.collection
-        parent_collection.objects.link(curve_obj)
-        collection.objects.unlink(curve_obj)
-    #print("after remove")
-    #print_structure(collection)
-    #print("****************************")
-
-#**************************************************************************
-def mirror_vec_with_vec(vec, normal, pos):
-    reflected = vec.reflect(normal)
-    delta_vec = pos.project(normal)
-    return reflected + 2*delta_vec
-
-def mirror_vec(vec, mirror_object, axis): #axis: 0 - x, 1 - y, 2 - z
-    basic_vec = mathutils.Vector((0, 0, 0))
-    basic_vec[axis] = 1
-    if mirror_object is not None:
-        mat = mirror_object.matrix_world.copy()
-        mat.invert()
-        mirror = basic_vec @ mat
-        return mirror_vec_with_vec(vec, mirror, mirror_object.matrix_world.translation)
-    else:
-        return vec.reflect(basic_vec)
-
-#**************************************************************************
-logging = [False, False]
 class NewGlobalList:
     def __init__(self, collection):
         self.collection = collection
@@ -1370,17 +365,11 @@ class NewGlobalList:
 
     def add_quads(self):
         for phantom_curve in self.collection.greg_settings.phantom_curves:
-            logging[0] = (phantom_curve.source_curve.name == "greg_curve_obj.002")
-            logging[1] = logging[0]
             if not phantom_curve.finished:
-                if logging[0]:
-                    print("here 0")
                 self.work_with_curve(phantom_curve)
 
     def work_with_curve(self, phantom_curve):
         curves_verified = [phantom_curve]
-        if logging[0]:
-            print([qq.source_curve.name for qq in curves_verified])
 
         bpoints_verified = []
         initial_bpoint = self.collection.greg_settings.phantom_bpoints[phantom_curve.bpoint1_name]
@@ -1402,12 +391,8 @@ class NewGlobalList:
                   end0,
                   first: bool) -> StepRes:
         if len(curves_verified) > 4 or (len(curves_verified) == 4 and initial_bpoint != bpoint):
-            if logging[1]:
-                print("here 1")
             return StepRes.NOT_FINISHED
         if initial_bpoint == bpoint:
-            if logging[1]:
-                print("here 2")
             if len(curves_verified) < 4:
                 return StepRes.NOT_FINISHED
             if self.verify_and_init_quad(curves_verified, end0):
@@ -1416,14 +401,10 @@ class NewGlobalList:
                 return StepRes.PART_FINISHED
             return StepRes.NOT_FINISHED
         if bpoint in bpoints_verified:
-            if logging[1]:
-                print("here 3")
             return StepRes.NOT_FINISHED
         bpoints_verified.append(bpoint)
         for end in bpoint.ends:
             phantom_curve1 = self.collection.greg_settings.phantom_curves[end.curve_name]
-            if logging[1]:
-                print("here", phantom_curve1.source_curve.name)
             if not self.are_collinear(end0, end): # they are not collinear
                 res = self.step_curve(initial_bpoint,
                                     phantom_curve1,
@@ -1432,13 +413,8 @@ class NewGlobalList:
                                     bpoints_verified,
                                     first)
                 if res in (StepRes.FINISHED, StepRes.PART_FINISHED):
-                    if logging[1]:
-                        print("here 4")
                     bpoints_verified.pop()
                     return res
-            else:
-                if logging[1]:
-                    print("here 5")
 
         bpoints_verified.pop()
         return StepRes.NOT_FINISHED
@@ -1451,8 +427,6 @@ class NewGlobalList:
     
     def are_collinear(self, end1: "GregPhantomCurveEnd", end2: "GregPhantomCurveEnd"):
         v1, v2 = [self.extract_handle_phantom(end) for end in (end1, end2)]
-        if logging[1]:
-            print(v1, v2)
         return are_collinear(v1, v2)
         
 
@@ -1464,17 +438,8 @@ class NewGlobalList:
                    bpoints_verified,
                    first) -> StepRes:
         if phantom_curve in curves_verified:
-            if logging[1]:
-                print("here 6")
-        if not phantom_curve in curves_verified:
-            if phantom_curve.finished:
-                if logging[1]:
-                    print("here 7")
             if not phantom_curve.finished:
                 curves_verified.append(phantom_curve)
-                if logging[0]:
-                    print([qq.source_curve.name for qq in curves_verified])
-                    #logging[1] = (phantom_curve.source_curve.name == 'greg_curve_obj.012')
                 if end_i == 0:
                     bpoint = self.collection.greg_settings.phantom_bpoints[phantom_curve.bpoint2_name]
                     end0 = bpoint.ends[phantom_curve.end2_name]
@@ -1488,9 +453,6 @@ class NewGlobalList:
                                      end0,
                                      False)
                 curves_verified.pop()
-                logging[1] = False
-                if logging[0]:
-                    print([qq.source_curve.name for qq in curves_verified])
 
                 match res:
                     case StepRes.FINISHED: 
@@ -1537,8 +499,6 @@ class NewGlobalList:
                     quad.dirs[2] = (phantom_curve.bpoint2_name == curves_verified[1].bpoint1_name)
             elif i == 3:
                 quad.dirs[3] = (phantom_curve.bpoint1_name == curves_verified[0].bpoint1_name)
-        if logging[0]:
-            print("quad!")
         return True
 
     @staticmethod
@@ -2069,143 +1029,6 @@ def render_existing_quad(quad, d, collection, i_s):
     coords = calc_quad_gregory_verts(quad.kk, quad.kk1, d)
     for i, vert_num in enumerate(range(quad.first_vert, quad.first_vert + (d.nedges-1)*(d.nedges-1))):
         mesh.vertices[vert_num].co = coords[i]
-
-
-
-#**************************************************************************
-
-class GregId(bpy.types.PropertyGroup):
-    name: bpy.props.StringProperty(default="")
-
-class GregArrowItem(bpy.types.PropertyGroup):
-    name: bpy.props.StringProperty(default="")
-    arrow: bpy.props.PointerProperty(type=bpy.types.Object)
-
-class GregBasicEnd(bpy.types.PropertyGroup):
-    name: bpy.props.StringProperty(default="")
-    curve: bpy.props.PointerProperty(type=bpy.types.Object)
-    end: bpy.props.IntProperty(default=-1)
-
-class GregArrow(bpy.types.PropertyGroup):
-    used_for_greg: bpy.props.BoolProperty(default=False)
-    name: bpy.props.StringProperty(default="")
-    coplanars: bpy.props.CollectionProperty(type=GregBasicEnd)
-
-class GregCurveEndItem(bpy.types.PropertyGroup):
-    basic_end: bpy.props.PointerProperty(type=GregBasicEnd)
-    empty: bpy.props.PointerProperty(type=bpy.types.Object)
-    coplanar_vectors: bpy.props.CollectionProperty(type=GregArrowItem)
-    collinear_to: bpy.props.CollectionProperty(type=GregBasicEnd)
-    hook: bpy.props.StringProperty(default="")
-    name: bpy.props.StringProperty(default="")
-    @property
-    def is_coplanar(self):
-        return len(self.coplanar_vectors) > 0
-    @property
-    def is_collinear(self):
-        return len(self.collinear_to) > 0
-
-class GregEmptyItem(bpy.types.PropertyGroup):
-    name: bpy.props.StringProperty(default="")
-    empty: bpy.props.PointerProperty(type=bpy.types.Object)
-
-class GregCurveItem(bpy.types.PropertyGroup):
-    name: bpy.props.StringProperty(default="")
-    curve: bpy.props.PointerProperty(type=bpy.types.Object)
-    
-class GregQuad(bpy.types.PropertyGroup):
-    name: bpy.props.StringProperty(default="")
-    curves: bpy.props.CollectionProperty(type=GregId)
-    kk: bpy.props.FloatVectorProperty(size=(4,4,3))
-    kk1: bpy.props.FloatVectorProperty(size=(2,2,3))
-    dirs: bpy.props.BoolVectorProperty(size=4)
-    first_vert: bpy.props.IntProperty()
-
-class GregPhantomCurveEnd(bpy.types.PropertyGroup):
-    name: bpy.props.StringProperty(default="")
-    curve_name: bpy.props.StringProperty(default="")
-    bpoint_name: bpy.props.StringProperty(default="")
-    curve_i: bpy.props.IntProperty()
-
-class GregPhantomCurve(bpy.types.PropertyGroup):
-    name: bpy.props.StringProperty(default="")
-    handle1_prop: bpy.props.FloatVectorProperty()
-    handle2_prop: bpy.props.FloatVectorProperty()
-    end1_name: bpy.props.StringProperty(default="")
-    end2_name: bpy.props.StringProperty(default="")
-    bpoint1_name: bpy.props.StringProperty(default="")
-    bpoint2_name: bpy.props.StringProperty(default="")
-    quads: bpy.props.CollectionProperty(type=GregId)
-    first_vert: bpy.props.IntProperty()
-    finished: bpy.props.BoolProperty(default=False)
-    b1_prop: bpy.props.FloatVectorProperty()
-    b2_prop: bpy.props.FloatVectorProperty()
-    b1_finished: bpy.props.BoolProperty(default=False)
-    b2_finished: bpy.props.BoolProperty(default=False)
-    source_curve: bpy.props.PointerProperty(type=bpy.types.Object)
-    source_curve_name: bpy.props.StringProperty(default="")
-    mirrored: bpy.props.BoolProperty(default=False)
-    conditional_sharp: bpy.props.BoolProperty(default=False)
-    coefs_multiply: bpy.props.FloatVectorProperty(size=(2, 2))
-    coefs_add: bpy.props.FloatVectorProperty(size=(2, 2, 3))
-    invert_shear: bpy.props.BoolVectorProperty(size=2)
-    @property
-    def handle1(self):
-        return mathutils.Vector(self.handle1_prop)
-    @property
-    def handle2(self):
-        return mathutils.Vector(self.handle2_prop)
-    @property
-    def b1(self):
-        return mathutils.Vector(self.b1_prop)
-    @property
-    def b2(self):
-        return mathutils.Vector(self.b2_prop)
-
-class GregPhantomBpoint(bpy.types.PropertyGroup):
-    name: bpy.props.StringProperty(default="default")
-    co_prop: bpy.props.FloatVectorProperty()
-    ends: bpy.props.CollectionProperty(type=GregPhantomCurveEnd)
-    vert: bpy.props.IntProperty()
-    original_empty_name: bpy.props.StringProperty(default="")
-    @property
-    def co(self):
-        return mathutils.Vector(self.co_prop)
-
-class GregCollectionSettings(bpy.types.PropertyGroup):
-    name: bpy.props.StringProperty(default="")
-    nedges: bpy.props.IntProperty(default=12)
-    used_for_greg: bpy.props.BoolProperty(default=False)
-    empties: bpy.props.CollectionProperty(type=GregEmptyItem)
-    curves: bpy.props.CollectionProperty(type=GregCurveItem)
-    arrows: bpy.props.CollectionProperty(type=GregArrowItem)
-    quads: bpy.props.CollectionProperty(type=GregQuad)
-    phantom_curves: bpy.props.CollectionProperty(type=GregPhantomCurve)
-    phantom_bpoints: bpy.props.CollectionProperty(type=GregPhantomBpoint)
-    mesh_obj: bpy.props.PointerProperty(type=bpy.types.Object)
-    max_id: bpy.props.IntProperty(default=0)
-
-class GregEmpty(bpy.types.PropertyGroup):
-    curve_ends: bpy.props.CollectionProperty(type=GregCurveEndItem)
-    used_for_greg: bpy.props.BoolProperty(default=False)
-    coplanars: bpy.props.CollectionProperty(type=GregArrowItem)
-    name: bpy.props.StringProperty(default="")
-    mirror_bridge_other_names: bpy.props.CollectionProperty(type=GregId)
-
-class GregCurve(bpy.types.PropertyGroup):
-    used_for_greg: bpy.props.BoolProperty(default=False)
-    end1_empty: bpy.props.PointerProperty(type=bpy.types.Object)
-    end2_empty: bpy.props.PointerProperty(type=bpy.types.Object)
-    end1_name: bpy.props.StringProperty(default="")
-    end2_name: bpy.props.StringProperty(default="")
-    name: bpy.props.StringProperty(default="")
-    phantom_curves_ids: bpy.props.CollectionProperty(type=GregId)
-    is_mirror_bridge: bpy.props.BoolProperty(default=False)
-    bridge_mirror_object: bpy.props.PointerProperty(type=bpy.types.Object)
-    bridge_mirror_axis: bpy.props.IntProperty(default=0)
-    bridge_mirror_other_i: bpy.props.IntProperty(default=0)
-
-#**************************************************************************
 
 def get_possible_curves_dict(curve, end):
     return {curve_end.basic_end.curve.greg_curve_settings.name: curve_end.basic_end.end
@@ -4548,9 +3371,6 @@ def get_parent_collection(obj):
         if bpy.context.scene.user_of_id(coll):
             return coll
 
-def generate_collection_name():
-    return str(uuid4())
-
 class CreateSurfacesBetweenCurves(bpy.types.Operator):
     """Gregory: create surface"""      # Use this as a tooltip for menu items and buttons.
     bl_idname = "object.greg_create_surfs"        # Unique identifier for bu: bpy.types.Contextttons and menu items to reference.
@@ -5048,20 +3868,6 @@ def harmonize_ends(ends: List[GregCurveEndItem],
         bezier_point.handle_right_type == "ALIGNED"
         bezier_point.handle_left_type == "ALIGNED"
 
-def set_ends_collinear_to_one_another(end1: GregCurveEndItem, end2: GregCurveEndItem, common_empty: bpy.types.Object):
-    ends = (end1, end2)
-    end_groups = [[end.basic_end] + list(end.collinear_to) for end in ends]
-    for first_basic_ends, second_basic_ends in zip(end_groups, reversed(end_groups)):
-        for first_basic_end in first_basic_ends:
-            not_basic_end = extract_end_from_basic_end_and_empty(first_basic_end, common_empty)
-            for second_basic_end in second_basic_ends:
-                if second_basic_end.name != not_basic_end.name:
-                    if not second_basic_end.name in not_basic_end.collinear_to:
-                        added_basic_end = not_basic_end.collinear_to.add()
-                        added_basic_end.curve = second_basic_end.curve
-                        added_basic_end.end = second_basic_end.end
-                        added_basic_end.name = second_basic_end.name
-
 def set_collinear_menu_func(self, context: bpy.types.Context):
     self.layout.operator(SetCollinear.bl_idname)
 
@@ -5114,11 +3920,6 @@ class SetNotCollinear(bpy.types.Operator):
 def set_not_collinear_menu_func(self, context: bpy.types.Context):
     self.layout.operator(SetNotCollinear.bl_idname)
 
-def extract_end_from_name_and_empty(name: str, empty: bpy.types.Object):
-    return empty.greg_empty_settings.curve_ends[name]
-
-def extract_end_from_basic_end_and_empty(basic_end: GregBasicEnd, empty: bpy.types.Object) -> str:
-    return extract_end_from_name_and_empty(basic_end.name, empty)
 
 def extract_end_name_from_curve_and_empty(curve: bpy.types.Object, empty: bpy.types.Object) -> Optional[str]:
     if empty == curve.greg_curve_settings.end1_empty:
