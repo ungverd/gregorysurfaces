@@ -354,7 +354,7 @@ class StepRes(Enum):
     NOT_FINISHED = 2
     PART_FINISHED = 3
 
-class NewGlobalList:
+class CreateSurfacesGlobalList:
     def __init__(self, collection):
         self.collection = collection
         self.quads = []
@@ -510,13 +510,13 @@ class NewGlobalList:
         return 1/8 * (p0 + 3*p1 + 3*p2 + p3)
     
     def calculate_midpoint_phantom(self, phantom_curve):
-        p0, p1, p2, p3 = NewGlobalList.extract_control_points(self.collection, phantom_curve)
+        p0, p1, p2, p3 = CreateSurfacesGlobalList.extract_control_points(self.collection, phantom_curve)
         return 1/8 * (p0 + 3*p1 + 3*p2 + p3)
     
     def get_edge_control_points(self, quad, edge_num: int):
         curve_name = quad.curves[edge_num].name
         phantom_curve = self.collection.greg_settings.phantom_curves[curve_name]
-        res = NewGlobalList.extract_control_points(self.collection, phantom_curve)
+        res = CreateSurfacesGlobalList.extract_control_points(self.collection, phantom_curve)
         if not quad.dirs[edge_num]:
             res.reverse()
         return res
@@ -570,11 +570,11 @@ class NewGlobalList:
         curve_name = quad.curves[i].name
         phantom_curve = self.collection.greg_settings.phantom_curves[curve_name]
         quad_i = phantom_curve.quads.find(quad.name)
-        a0, a3 = NewGlobalList.extract_a0_a3(quad, i)
-        p0, p1, p2, p3 = NewGlobalList.get_edge_control_points_from_kk(quad, i)
+        a0, a3 = CreateSurfacesGlobalList.extract_a0_a3(quad, i)
+        p0, p1, p2, p3 = CreateSurfacesGlobalList.get_edge_control_points_from_kk(quad, i)
         neighbour_quad = self.get_neighbour_quad(quad, i)
         if neighbour_quad is None:
-            a1, a2 = NewGlobalList.calculate_free_coefs(a0, a3, quad_i, phantom_curve, self.collection)
+            a1, a2 = CreateSurfacesGlobalList.calculate_free_coefs(a0, a3, quad_i, phantom_curve, self.collection)
             phantom_curve.b1_finished = True
             phantom_curve.b2_finished = True
             phantom_curve.conditional_sharp = True
@@ -583,28 +583,28 @@ class NewGlobalList:
             s1 = p2 - p1
             s2 = p3 - p2
             neighbour_i = neighbour_quad.curves.find(quad.curves[i].name)
-            bb0, bb2 = NewGlobalList.extract_a0_a3(neighbour_quad, neighbour_i)
+            bb0, bb2 = CreateSurfacesGlobalList.extract_a0_a3(neighbour_quad, neighbour_i)
             if quad.dirs[i] != neighbour_quad.dirs[neighbour_i]:
                 bb0, bb2 = bb2, bb0
             b0 = (bb0 - a0).normalized()
             b2 = (bb2 - a3).normalized()
             for v in (a0, a3, b0, b2, s0, s2):
                 if v.length < TH:
-                    a1, a2 = NewGlobalList.calculate_free_coefs(a0, a3, quad_i, phantom_curve, self.collection)
+                    a1, a2 = CreateSurfacesGlobalList.calculate_free_coefs(a0, a3, quad_i, phantom_curve, self.collection)
                     phantom_curve.conditional_sharp = True
                     break
             else:
                 if not are_coplanar(a0, b0, s0) or not are_coplanar(a3, s2, b2):
-                    a1, a2 = NewGlobalList.calculate_free_coefs(a0, a3, quad_i, phantom_curve, self.collection)
+                    a1, a2 = CreateSurfacesGlobalList.calculate_free_coefs(a0, a3, quad_i, phantom_curve, self.collection)
                     phantom_curve.conditional_sharp = True
                 elif b0.cross(s0).length < TH or b2.cross(s2).length < TH:
-                    a1, a2 = NewGlobalList.calculate_free_coefs(a0, a3, quad_i, phantom_curve, self.collection)
+                    a1, a2 = CreateSurfacesGlobalList.calculate_free_coefs(a0, a3, quad_i, phantom_curve, self.collection)
                     phantom_curve.conditional_sharp = True
                 else:
                     k0, h0 = get_coefs(b0, s0, a0)
                     k1, h1 = get_coefs(b2, s2, a3)
                     ve = self.calculate_ve(quad, i, neighbour_quad, neighbour_i)
-                    b1 = NewGlobalList.calculate_b1(k0, k1, h0, h1, b0, b2, s0, s1, s2, a0, a3, ve)
+                    b1 = CreateSurfacesGlobalList.calculate_b1(k0, k1, h0, h1, b0, b2, s0, s1, s2, a0, a3, ve)
                     prev_b1 = phantom_curve.b2 if quad_i == 0 else phantom_curve.b1
                     if prev_b1 == (0,0,0):
                         if quad_i == 0:
@@ -621,10 +621,10 @@ class NewGlobalList:
                         else:
                             phantom_curve.b2_prop = b1
                             phantom_curve.b1_prop = -b1
-                        next_curve_no = NewGlobalList.get_curve_name_for_shear(quad,
+                        next_curve_no = CreateSurfacesGlobalList.get_curve_name_for_shear(quad,
                                                                                i,
                                                                                self.collection)
-                        other_curve_no = NewGlobalList.get_curve_name_for_shear(neighbour_quad,
+                        other_curve_no = CreateSurfacesGlobalList.get_curve_name_for_shear(neighbour_quad,
                                                                                 neighbour_i,
                                                                                 self.collection)
                         
@@ -635,9 +635,9 @@ class NewGlobalList:
                             except IndexError:
                                 print("quad_i", quad_i)
                         if phantom_curve.source_curve.greg_is_sharp:
-                            a1, a2 = NewGlobalList.calculate_free_coefs(a0, a3, quad_i, phantom_curve, self.collection)
+                            a1, a2 = CreateSurfacesGlobalList.calculate_free_coefs(a0, a3, quad_i, phantom_curve, self.collection)
                         else:
-                            b1_corrected = NewGlobalList.get_b1_corrected(b1, quad, i, p0, p1, p2, p3, phantom_curve, quad_i)
+                            b1_corrected = CreateSurfacesGlobalList.get_b1_corrected(b1, quad, i, p0, p1, p2, p3, phantom_curve, quad_i)
                             multiply0 = 2 * k0
                             add0 = k1 * b0 + 2 * h0 * s1 + h1 * s0
                             multiply1 = 2 * k1
@@ -691,16 +691,16 @@ class NewGlobalList:
         curve_name = quad.curves[i].name
         phantom_curve = collection.greg_settings.phantom_curves[curve_name]
         quad_i = phantom_curve.quads.find(quad.name)
-        p0, p1, p2, p3 = NewGlobalList.get_edge_control_points_from_kk(quad, i)
+        p0, p1, p2, p3 = CreateSurfacesGlobalList.get_edge_control_points_from_kk(quad, i)
         if phantom_curve.conditional_sharp or phantom_curve.source_curve.greg_is_sharp:
-            a0, a3 = NewGlobalList.extract_a0_a3(quad, i)
-            a1, a2 = NewGlobalList.calculate_free_coefs(a0, a3, quad_i, phantom_curve, collection)
+            a0, a3 = CreateSurfacesGlobalList.extract_a0_a3(quad, i)
+            a1, a2 = CreateSurfacesGlobalList.calculate_free_coefs(a0, a3, quad_i, phantom_curve, collection)
         else:
             if quad_i == 0:
                 b1 = phantom_curve.b1
             else:
                 b1 = phantom_curve.b2
-            b1_corrected = NewGlobalList.get_b1_corrected(b1, quad, i, p0, p1, p2, p3, phantom_curve, quad_i)
+            b1_corrected = CreateSurfacesGlobalList.get_b1_corrected(b1, quad, i, p0, p1, p2, p3, phantom_curve, quad_i)
             multiply0 = phantom_curve.coefs_multiply[quad_i][0]
             add0 = mathutils.Vector(phantom_curve.coefs_add[quad_i][0])
             multiply1 = phantom_curve.coefs_multiply[quad_i][1]
@@ -750,7 +750,7 @@ class NewGlobalList:
         curve_obj = phantom_curve.source_curve
         a_central = 0.15*(a0 + a3) #looks better when it's small
         bulge = a_central
-        p0, p1, p2, p3 = NewGlobalList.extract_control_points(collection, phantom_curve)
+        p0, p1, p2, p3 = CreateSurfacesGlobalList.extract_control_points(collection, phantom_curve)
         curve_vec = p2 + p3 - p0 - p1
         if are_collinear(curve_vec, bulge):
             curve_vec = p3 - p0
@@ -898,8 +898,8 @@ class NewGlobalList:
 
     @staticmethod
     def compare_vecs_all_same(vecs1, vecs2):
-        return (NewGlobalList.compare_vecs_all_same_direct(vecs1, vecs2) or
-                NewGlobalList.compare_vecs_all_same_reverse(vecs1, vecs2))
+        return (CreateSurfacesGlobalList.compare_vecs_all_same_direct(vecs1, vecs2) or
+                CreateSurfacesGlobalList.compare_vecs_all_same_reverse(vecs1, vecs2))
     @staticmethod
     def compare_vecs_all_same_direct(vecs1, vecs2):
         for vec1, vec2 in zip(vecs1, vecs2):
@@ -915,10 +915,10 @@ class NewGlobalList:
         return True
     
     def add_mirror_from_phantome(self, phantom_curve, curve_obj, mirror_obj, axis):
-        co1, handle1, handle2, co2 = NewGlobalList.extract_control_points(self.collection, phantom_curve)
+        co1, handle1, handle2, co2 = CreateSurfacesGlobalList.extract_control_points(self.collection, phantom_curve)
         vecs = (co1, co2, handle1, handle2)
         mirrored_vecs = [mirror_vec(vec, mirror_obj, axis) for vec in vecs]
-        if not NewGlobalList.compare_vecs_all_same(vecs, mirrored_vecs):
+        if not CreateSurfacesGlobalList.compare_vecs_all_same(vecs, mirrored_vecs):
             self.add_phantom_curve(*mirrored_vecs, curve_obj, not phantom_curve.mirrored)
 
     def prepare_for_greg(self):
@@ -978,7 +978,7 @@ class NewGlobalList:
             add_corner(self, coords)
             bpoint.vert = i
         for phantom_curve in greg_settings.phantom_curves:
-            verts = add_border(*NewGlobalList.extract_control_points(self.collection, phantom_curve), self, d)
+            verts = add_border(*CreateSurfacesGlobalList.extract_control_points(self.collection, phantom_curve), self, d)
             phantom_curve.first_vert = verts[0]
         for quad in greg_settings.quads:
             self.render_quad(quad, d)
@@ -1023,7 +1023,7 @@ class NewGlobalList:
 def render_existing_quad(quad, d, collection, i_s):
     mesh = collection.greg_settings.mesh_obj.data
     for i in i_s:
-        NewGlobalList.recalculate_coefs_along_segment(quad, i, collection)
+        CreateSurfacesGlobalList.recalculate_coefs_along_segment(quad, i, collection)
     coords = calc_quad_gregory_verts(quad.kk, quad.kk1, d)
     for i, vert_num in enumerate(range(quad.first_vert, quad.first_vert + (d.nedges-1)*(d.nedges-1))):
         mesh.vertices[vert_num].co = coords[i]
@@ -3404,7 +3404,7 @@ class CreateSurfacesBetweenCurves(bpy.types.Operator):
         else:
             if prev_nedges != collection.greg_settings.nedges:
                 d.conditional_update(collection.greg_settings.nedges)
-        glist = NewGlobalList(collection)
+        glist = CreateSurfacesGlobalList(collection)
         glist.prepare_for_greg()
         glist.add_curves_and_bpoints()
         glist.add_quads()
