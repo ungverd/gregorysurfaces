@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Tuple
 import math
 
 import bpy
@@ -379,3 +379,192 @@ def copy_mirrors_from_one_obj_to_another(obj_with_mirrors: bpy.types.Object,
             new_mirror.mirror_object = modifier.mirror_object
             new_mirror.use_axis = modifier.use_axis
             i += 1
+
+def get_approx_bezier_length(co_s: Tuple[mathutils.Vector, mathutils.Vector],
+                             handles: Tuple[mathutils.Vector, mathutils.Vector]) -> float:
+    points_handles = [co + handle for co, handle in zip(co_s, handles)]
+    length_extremities = (co_s[1] - co_s[0]).length
+    lengths_handles = [handle.length for handle in handles]
+    between_handles_length = (points_handles[1] - points_handles[0]).length
+    approx_length = (length_extremities + between_handles_length + sum(lengths_handles)) / 2
+    return approx_length
+
+def make_collinear(v1: mathutils.Vector, v2: mathutils.Vector):
+    dif = (v1 - v2).normalized()
+    new_v1 = dif * v1.length
+    new_v2 = -1 * dif * v2.length
+    return new_v1, new_v2
+
+def check_curve_crosses_mirror(obj, use_matrix_world = True):
+    p1, p2 = None, None
+    for i, modifier in enumerate(obj.modifiers):
+        if modifier.type == 'MIRROR':
+            if p1 is None:
+                if use_matrix_world:
+                    p1 = obj.greg_curve_settings.end1_empty.matrix_world.translation
+                    p2 = obj.greg_curve_settings.end2_empty.matrix_world.translation
+                else:
+                    p1 = obj.greg_curve_settings.end1_empty.location
+                    p2 = obj.greg_curve_settings.end2_empty.location
+            mirror_object = modifier.mirror_object
+            for axis in range(3):
+                if modifier.use_axis[axis]:
+                    normal = mathutils.Vector((0, 0, 0))
+                    normal[axis] = 1
+                    if mirror_object is not None:
+                        mat = mirror_object.matrix_world.copy()
+                        mat.invert()
+                        normal = normal @ mat
+                        pos = mirror_object.matrix_world.translation
+                    else:
+                        pos = mathutils.Vector((0,0,0))
+                    q1 = normal.dot(pos - p1)
+                    q2 = normal.dot(pos - p2)
+                    if (q1 < -TH and q2 > TH) or (q1 > TH and q2 < -TH):
+                        return i, axis
+    return False
+
+def make_curve_mirror_bridge(curve, target, other, mirror_obj, axis):
+    curve_name = curve.greg_curve_settings.name
+    add_mirror_empty_constraints(other, target, mirror_obj, axis, curve_name)
+    if target == curve.greg_curve_settings.end1_empty:
+        target_end_name = curve.greg_curve_settings.end1_name
+        other_end_name = curve.greg_curve_settings.end2_name
+        target_point = curve.data.splines[0].bezier_points[0]
+        other_point = curve.data.splines[0].bezier_points[1]
+        other_i = 1
+    elif target == curve.greg_curve_settings.end2_empty:
+        target_end_name = curve.greg_curve_settings.end2_name
+        other_end_name = curve.greg_curve_settings.end1_name
+        target_point = curve.data.splines[0].bezier_points[1]
+        other_point = curve.data.splines[0].bezier_points[0]
+        other_i = 0
+    new_other_name = target.greg_empty_settings.mirror_bridge_other_names.add()
+    new_other_name.name = other.greg_empty_settings.name
+    new_target_name = other.greg_empty_settings.mirror_bridge_other_names.add()
+    new_target_name.name = target.greg_empty_settings.name
+    curve.greg_curve_settings.is_mirror_bridge = True
+    curve.greg_curve_settings.bridge_mirror_object = mirror_obj
+    curve.greg_curve_settings.bridge_mirror_axis = axis
+    curve.greg_curve_settings.bridge_mirror_other_i = other_i
+    return target_end_name, other_end_name, target_point, other_point
+
+def add_mirror_empty_constraints(empty, target, mirror_object, axis, curve_name):
+    constraint = empty.constraints.new('COPY_LOCATION')
+    if mirror_object:
+        constraint.owner_space = 'CUSTOM'
+        constraint.space_object = mirror_object
+    else:
+        constraint.owner_space = 'WORLD'
+    constraint.use_x = True
+    constraint.use_y = True
+    constraint.use_z = True
+    if axis == 0:
+        constraint.invert_x = True
+    elif axis == 1:
+        constraint.invert_y = True
+    elif axis == 2:
+        constraint.invert_z = True
+    constraint.target = target
+    constraint.name = f"copy_location_{curve_name}"
+
+    constraint2 = empty.constraints.new('COPY_ROTATION')
+    if mirror_object:
+        constraint2.owner_space = 'CUSTOM'
+        constraint2.space_object = mirror_object
+    else:
+        constraint2.owner_space = 'WORLD'
+    constraint2.use_x = True
+    constraint2.use_y = True
+    constraint2.use_z = True
+    if axis == 0:
+        constraint2.invert_y = True
+        constraint2.invert_z = True
+    elif axis == 1:
+        constraint2.invert_x = True
+        constraint2.invert_z = True
+    elif axis == 2:
+        constraint2.invert_x = True
+        constraint2.invert_y = True
+    constraint2.target = target
+    constraint2.name = f"copy_rotation_{curve_name}"
+
+def coplanar_collinear_add_one_end(empty_obj, collection, new_end):
+    for end in empty_obj.greg_empty_settings.curve_ends:
+        apply_hook(end)
+    
+    for end1 in empty_obj.greg_empty_settings.curve_ends:
+        if end1 != new_end:
+            check_ends_collinear(end1, new_end)
+    collinear_groups = []
+    used_dict = {end.name: False for end in empty_obj.greg_empty_settings.curve_ends}
+    for end in empty_obj.greg_empty_settings.curve_ends:
+        if not end.is_collinear:
+            collinear_groups.append([end])
+        else:
+            if used_dict[end.name] == False:
+                used_dict[end.name] = True
+                collinear_groups.append([end])
+                for basic_end in end.collinear_to:
+                    collinear_end_name = basic_end.name
+                    used_dict[collinear_end_name] = True
+                    collinear_groups[-1].append(empty_obj.greg_empty_settings.curve_ends[collinear_end_name])
+    sets_and_vectors = []
+    for i, ends1 in enumerate(collinear_groups):
+        for j, ends2 in enumerate(collinear_groups[:i]):
+            for ends3 in collinear_groups[:j]:
+                if new_end in ends1 or new_end in ends2 or new_end in ends3:
+                    res = check_ends_coplanar(ends1, ends2, ends3, empty_obj, collection)
+                    if res is not None:
+                        sets_and_vectors.append((set(ends1).union(set(ends2)).union(set(ends3)), res))
+    final_sets_and_vectors = []
+    for se, vec in sets_and_vectors:
+        i = 0
+        added = False
+        while i < len(final_sets_and_vectors) and not added:
+            if are_collinear(vec, final_sets_and_vectors[i][1]):
+                final_sets_and_vectors[i][0] = final_sets_and_vectors[i][0].union(se)
+                added = True
+            i += 1
+        if not added:
+            final_sets_and_vectors.append([se.copy(), vec])
+    for se, vec in final_sets_and_vectors:
+        common_arrows = None
+        for end in se:
+            if end != new_end:
+                if common_arrows is None:
+                    common_arrows = set(vec.arrow for vec in end.coplanar_vectors)
+                else:
+                    common_arrows = common_arrows.intersection(set(vec.arrow for vec in end.coplanar_vectors))
+        if len(common_arrows) > 0:
+            target_arrow = common_arrows[0]
+            add_one_end_to_arrow(new_end, target_arrow)
+        else:
+            add_coplanar_arrow(se, vec, empty_obj, collection)
+    
+    for end in empty_obj.greg_empty_settings.curve_ends:
+        add_hook(end)
+
+
+def add_one_end_to_arrow(end: GregCurveEndItem, arrow_obj: bpy.types.Object):
+    end_setting = end.coplanar_vectors.add()
+    end_setting.arrow = arrow_obj
+    end_setting.name = arrow_obj.greg_arrow_settings.name
+    arrow_setting = arrow_obj.greg_arrow_settings.coplanars.add()
+    arrow_setting.name = end.name
+    arrow_setting.curve = end.basic_end.curve
+    arrow_setting.end = end.basic_end.end
+
+def extract_end_name_from_curve_and_i(curve: bpy.types.Object, i: int):
+    if i == 0:
+        end_name = curve.greg_curve_settings.end1_name
+    elif i == 1:
+        end_name = curve.greg_curve_settings.end2_name
+    else:
+        raise Exception("I must be 0 or 1!")
+    return end_name
+
+def get_parent_collection(obj):
+    for coll in obj.users_collection:
+        if bpy.context.scene.user_of_id(coll):
+            return coll

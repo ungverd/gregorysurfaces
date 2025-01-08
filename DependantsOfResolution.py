@@ -1,5 +1,5 @@
 import math
-from typing import List
+from typing import List, Dict
 import numpy as np
 import numpy.typing as npt
 
@@ -52,3 +52,5 @@ class DependantsOfResolution_np:
         self.dims1 = np.empty((self.nedges-1, self.nedges-1, 1, 2, 3))
         self.dims2 = np.empty((self.nedges-1, self.nedges-1, 4, 1, 3))
         self.calculate_faces()
+
+dependants_of_resolution_dict: Dict[str, DependantsOfResolution_np] = {}
