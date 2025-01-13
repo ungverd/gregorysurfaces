@@ -3,7 +3,7 @@ import bpy
 from .commons import check_curve_crosses_mirror, make_curve_mirror_bridge, add_hook, apply_hook, mirror_vec
 
 
-class MakeCurveMirrorBridge(bpy.types.Operator):
+class OBJECT_OT_make_curve_mirror_bridge(bpy.types.Operator):
     """Gregory: make curve a bridge through mirror"""
     bl_idname = "object.make_curve_mirror_bridge"
     bl_label = "Greg: make curve bridge through mirror"         # Display name in the interface.
@@ -59,4 +59,4 @@ class MakeCurveMirrorBridge(bpy.types.Operator):
         return {'FINISHED'}    
 
 def add_bridge_mirror_func(self, context: bpy.types.Context):
-    self.layout.operator(MakeCurveMirrorBridge.bl_idname)
+    self.layout.operator(OBJECT_OT_make_curve_mirror_bridge.bl_idname)

@@ -4,7 +4,7 @@ from .commons import get_greg_collection
 from .DependantsOfResolution import dependants_of_resolution_dict, DependantsOfResolution_np
 from .CreateSurfacesGlobalList import CreateSurfacesGlobalList
 
-class CreateSurfacesBetweenCurves(bpy.types.Operator):
+class OBJECT_OT_create_surfaces_between_curves(bpy.types.Operator):
     """Gregory: create surface"""      # Use this as a tooltip for menu items and buttons.
     bl_idname = "object.greg_create_surfs"        # Unique identifier for bu: bpy.types.Contextttons and menu items to reference.
     bl_label = "Greg: create surfaces"         # Display name in the interface.
@@ -50,4 +50,4 @@ class CreateSurfacesBetweenCurves(bpy.types.Operator):
         return {'FINISHED'}            # Lets Blender know the operator finished successfully.
 
 def add_surface_menu_func(self, context: bpy.types.Context):
-    self.layout.operator(CreateSurfacesBetweenCurves.bl_idname)
+    self.layout.operator(OBJECT_OT_create_surfaces_between_curves.bl_idname)

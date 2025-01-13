@@ -3,7 +3,7 @@ import bpy
 from .commons import get_greg_collection, get_parent_collection
 from .GlobalList import GlobalList, Spline
 
-class CreateCurvesCollection(bpy.types.Operator):
+class OBJECT_OT_create_curves_collection(bpy.types.Operator):
     """Gregory: create curves"""      # Use this as a tooltip for menu items and buttons.
     bl_idname = "object.greg_create_curves"        # Unique identifier for bu: bpy.types.Contextttons and menu items to reference.
     bl_label = "Greg: create curves"         # Display name in the interface.
@@ -48,4 +48,4 @@ class CreateCurvesCollection(bpy.types.Operator):
         return {'FINISHED'}            # Lets Blender know the operator finished successfully.
 
 def add_collection_menu_func(self, context: bpy.types.Context):
-    self.layout.operator(CreateCurvesCollection.bl_idname)
+    self.layout.operator(OBJECT_OT_create_curves_collection.bl_idname)

@@ -5,7 +5,7 @@ import bpy
 from .commons import get_greg_collection, apply_hook, add_hook
 from .GlobalForSubdivide import GlobalForSubdivide
 
-class GregSubdivide(bpy.types.Operator):
+class OBJECT_OT_greg_subdivide(bpy.types.Operator):
     """Gregory: subdivide loop of curves"""
     bl_idname = "object.greg_sibdivide"
     bl_label = "Greg: subdivide loop of curves"         # Display name in the interface.
@@ -76,4 +76,4 @@ def verify_complete_for_subdivide(context: bpy.types.Context) -> Optional[Tuple[
         return g_list, optimal_quad, empties
 
 def add_greg_subdivide_func(self, context: bpy.types.Context):
-    self.layout.operator(GregSubdivide.bl_idname)
+    self.layout.operator(OBJECT_OT_greg_subdivide.bl_idname)

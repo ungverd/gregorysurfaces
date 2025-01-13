@@ -542,7 +542,7 @@ class CreateSurfacesGlobalList:
                      a3: mathutils.Vector,
                      ve: mathutils.Vector):
         b1_ref = (b0 + b2) / 2
-        return b1_ref
+        return b1_ref # * 3
         #a1_ref = (a0.length + a3.length) / 2
         #ve = ve.normalized() * a1_ref
         '''ve = ve * 0.5

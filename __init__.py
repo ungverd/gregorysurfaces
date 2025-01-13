@@ -33,10 +33,10 @@ from .commons import make_collinear, extract_end_name_from_curve_and_i
 from .commons import coplanar_collinear_add_one_end, add_one_end_to_arrow
 from .OnDepsgraphUpdate import on_depsgraph_update
 from .CbUpdatePatches import cb_update
-from .CreateSurfacesBetweenCurves import CreateSurfacesBetweenCurves, add_surface_menu_func
-from .MakeCurveMirrorBridge import MakeCurveMirrorBridge, add_bridge_mirror_func
-from .GregSubdivide import GregSubdivide, add_greg_subdivide_func
-from .CreateCurvesCollection import CreateCurvesCollection, add_collection_menu_func
+from .CreateSurfacesBetweenCurves import OBJECT_OT_create_surfaces_between_curves, add_surface_menu_func
+from .MakeCurveMirrorBridge import OBJECT_OT_make_curve_mirror_bridge, add_bridge_mirror_func
+from .GregSubdivide import OBJECT_OT_greg_subdivide, add_greg_subdivide_func
+from .CreateCurvesCollection import OBJECT_OT_create_curves_collection, add_collection_menu_func
 from .PartialGlobalList import PartialGlobalList, PartialCurve
 
 
@@ -353,7 +353,7 @@ def add_print_info_func(self, context: bpy.types.Context):
     self.layout.operator(PrintItemInfo.bl_idname)
 
 
-class UnsetCurveMirrorBridge(bpy.types.Operator):
+class OBJECT_OT_unset_curve_mirror_bridge(bpy.types.Operator):
     """Gregory: unset curve a bridge through mirror"""
     bl_idname = "object.unset_curve_mirror_bridge"
     bl_label = "Greg: unset curve bridge through mirror"         # Display name in the interface.
@@ -398,7 +398,7 @@ class UnsetCurveMirrorBridge(bpy.types.Operator):
         return {'FINISHED'}    
 
 def add_unset_bridge_mirror_func(self, context: bpy.types.Context):
-    self.layout.operator(UnsetCurveMirrorBridge.bl_idname)
+    self.layout.operator(OBJECT_OT_unset_curve_mirror_bridge.bl_idname)
 
 
 def copy_mirrors_from_one_obj_to_another(obj_with_mirrors: bpy.types.Object,
@@ -412,7 +412,7 @@ def copy_mirrors_from_one_obj_to_another(obj_with_mirrors: bpy.types.Object,
             i += 1
 
 
-class GregExtrude(bpy.types.Operator):
+class OBJECT_OT_greg_extrude(bpy.types.Operator):
     """Gregory: extrude curve"""
     bl_idname = "object.greg_extrude"
     bl_label = "Greg: extrude curve"         # Display name in the interface.
@@ -480,7 +480,7 @@ class GregExtrude(bpy.types.Operator):
         return {'FINISHED'}    
 
 def add_greg_extrude_func(self, context: bpy.types.Context):
-    self.layout.operator(GregExtrude.bl_idname)
+    self.layout.operator(OBJECT_OT_greg_extrude.bl_idname)
 
 def apply_hook_and_get_handles_from_end(end: GregCurveEndItem,
                                         curve: bpy.types.Object,
@@ -586,7 +586,7 @@ def merge_empties(empty1, empty2):
     objs.remove(empty2, do_unlink=True)
 
 
-class GregMergeAtCenter(bpy.types.Operator):
+class OBJECT_OT_greg_merge_at_center(bpy.types.Operator):
     """Gregory: merge two points at center"""
     bl_idname = "object.greg_merge_center"
     bl_label = "merge at center"         # Display name in the interface.
@@ -611,7 +611,7 @@ def get_first_second_from_two_selected(context: bpy.types.Context):
     first = [obj for obj in objs if obj != last][0]
     return first, last
 
-class GregMergeAtFirst(bpy.types.Operator):
+class OBJECT_OT_greg_merge_at_first(bpy.types.Operator):
     """Gregory: merge two points at first"""
     bl_idname = "object.greg_merge_first"
     bl_label = "merge at first"         # Display name in the interface.
@@ -628,7 +628,7 @@ class GregMergeAtFirst(bpy.types.Operator):
         merge_empties(empty1, empty2)
         return {'FINISHED'}
 
-class GregMergeAtLast(bpy.types.Operator):
+class OBJECT_OT_greg_merge_at_last(bpy.types.Operator):
     """Gregory: merge two points at last"""
     bl_idname = "object.greg_merge_last"
     bl_label = "merge at last"         # Display name in the interface.
@@ -656,9 +656,9 @@ class GregMergeSub(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         #layout.label("This is a submenu")
-        layout.operator(GregMergeAtCenter.bl_idname)
-        layout.operator(GregMergeAtFirst.bl_idname)
-        layout.operator(GregMergeAtLast.bl_idname)
+        layout.operator(OBJECT_OT_greg_merge_at_center.bl_idname)
+        layout.operator(OBJECT_OT_greg_merge_at_first.bl_idname)
+        layout.operator(OBJECT_OT_greg_merge_at_last.bl_idname)
 
 def add_greg_merge_func(self, context: bpy.types.Context):
     self.layout.menu(GregMergeSub.bl_idname)
@@ -715,7 +715,7 @@ class PrintDotInfo(bpy.types.Operator):
 def add_print_dot_func(self, context: bpy.types.Context):
     self.layout.operator(PrintDotInfo.bl_idname)        
 
-class SetNotPatch(bpy.types.Operator):
+class OBJECT_OT_set_not_patch(bpy.types.Operator):
     """Gregory: set loop of curves not patch"""
     bl_idname = "object.greg_set_not_patch"
     bl_label = "Greg: set loop not patch"         # Display name in the interface.
@@ -752,7 +752,7 @@ class SetNotPatch(bpy.types.Operator):
         return {'FINISHED'}
 
 def set_not_face_menu_func(self, context: bpy.types.Context):
-    self.layout.operator(SetNotPatch.bl_idname)
+    self.layout.operator(OBJECT_OT_set_not_patch.bl_idname)
 
 
 def verify_empty_is_other_mirrored(empty: bpy.types.Object):
@@ -768,7 +768,7 @@ def verify_empty_is_other_mirrored(empty: bpy.types.Object):
     return False
 
 
-class AddBezierCurve(bpy.types.Operator):
+class OBJECT_OT_greg_add_bezier_curve(bpy.types.Operator):
     """Gregory: add curve to structure"""     # Use this as a tooltip for menu items and buttons.
     bl_idname = "object.greg_add_curve_to_structure"        # Unique identifier for bu: bpy.types.Contextttons and menu items to reference.
     bl_label = "Greg: add curve"         # Display name in the interface.
@@ -813,9 +813,9 @@ class AddBezierCurve(bpy.types.Operator):
         return {'FINISHED'}            # Lets Blender know the operator finished successfully.
 
 def add_bezier_curve_menu_func(self, context: bpy.types.Context):
-    self.layout.operator(AddBezierCurve.bl_idname)
+    self.layout.operator(OBJECT_OT_greg_add_bezier_curve.bl_idname)
 
-class SetNotCoplanar(bpy.types.Operator):
+class OBJECT_OT_greg_set_not_coplanar(bpy.types.Operator):
     """Gregory: set not coplanar"""      # Use this as a tooltip for menu items and buttons.
     bl_idname = "object.greg_set_not_coplanar"        # Unique identifier for bu: bpy.types.Contextttons and menu items to reference.
     bl_label = "Greg: set not coplanar"         # Display name in the interface.
@@ -877,9 +877,9 @@ class SetNotCoplanar(bpy.types.Operator):
         return {'FINISHED'}            # Lets Blender know the operator finished successfully.
 
 def set_not_coplanar_menu_func(self, context: bpy.types.Context):
-    self.layout.operator(SetNotCoplanar.bl_idname)
+    self.layout.operator(OBJECT_OT_greg_set_not_coplanar.bl_idname)
 
-class SetCoplanar(bpy.types.Operator):
+class OBJECT_OT_greg_set_coplanar(bpy.types.Operator):
     """Gregory: set coplanar"""      # Use this as a tooltip for menu items and buttons.
     bl_idname = "object.greg_set_coplanar"        # Unique identifier for bu: bpy.types.Contextttons and menu items to reference.
     bl_label = "Greg: set coplanar"         # Display name in the interface.
@@ -1014,7 +1014,7 @@ def return_one_coplanar_plane_if_exists(ends: List[GregCurveEndItem]) -> Optiona
     return coplanar
 
 def set_coplanar_menu_func(self, context: bpy.types.Context):
-    self.layout.operator(SetCoplanar.bl_idname)
+    self.layout.operator(OBJECT_OT_greg_set_coplanar.bl_idname)
 
 def get_ends_from_curves_connected_to_one_empty(curves: List[bpy.types.Object],
                                                 empty: bpy.types.Object) -> List[GregCurveEndItem]:
@@ -1061,7 +1061,7 @@ def turn_ends_to_be_coplanar(ends: List[GregCurveEndItem], vectors: List[mathuti
     for vector, end in zip(changed_vectors, ends):
         rotate_end_to_vec(vector, end.basic_end)
 
-class SetCollinear(bpy.types.Operator):
+class OBJECT_OT_greg_set_collinear(bpy.types.Operator):
     """Gregory: set collinear"""      # Use this as a tooltip for menu items and buttons.
     bl_idname = "object.greg_set_collinear"        # Unique identifier for bu: bpy.types.Contextttons and menu items to reference.
     bl_label = "Greg: set collinear"         # Display name in the interface.
@@ -1132,9 +1132,9 @@ def harmonize_ends(ends: List[GregCurveEndItem],
         bezier_point.handle_left_type == "ALIGNED"
 
 def set_collinear_menu_func(self, context: bpy.types.Context):
-    self.layout.operator(SetCollinear.bl_idname)
+    self.layout.operator(OBJECT_OT_greg_set_collinear.bl_idname)
 
-class SetNotCollinear(bpy.types.Operator):
+class OBJECT_OT_greg_set_not_collinear(bpy.types.Operator):
     """Gregory: set not collinear"""      # Use this as a tooltip for menu items and buttons.
     bl_idname = "object.greg_set_not_collinear"        # Unique identifier for bu: bpy.types.Contextttons and menu items to reference.
     bl_label = "Greg: set not collinear"         # Display name in the interface.
@@ -1181,7 +1181,7 @@ class SetNotCollinear(bpy.types.Operator):
         return {'FINISHED'}
 
 def set_not_collinear_menu_func(self, context: bpy.types.Context):
-    self.layout.operator(SetNotCollinear.bl_idname)
+    self.layout.operator(OBJECT_OT_greg_set_not_collinear.bl_idname)
 
 
 def extract_end_name_from_curve_and_empty(curve: bpy.types.Object, empty: bpy.types.Object) -> Optional[str]:
@@ -1244,11 +1244,12 @@ addon_keymaps = []
 
 classes = (GregId, GregArrowItem, GregBasicEnd, GregArrow, GregCurveEndItem, GregEmptyItem, GregCurveItem, GregQuad,
            GregPhantomCurveEnd, GregPhantomCurve, GregPhantomBpoint, GregCollectionSettings, GregEmpty ,GregCurve,
-           CreateCurvesCollection, CreateSurfacesBetweenCurves, SetNotPatch, PrintItemInfo, MakeCurveMirrorBridge,
-           UnsetCurveMirrorBridge, PrintDotInfo, OBJECT_PT_greg_curve_properties, OBJECT_PT_greg_curve_properties1,
-           OBJECT_PT_greg_curve_properties2, GregSubdivide, GregExtrude, GregMergeAtCenter, GregMergeAtFirst,
-           GregMergeAtLast, GregMergeSub, AddBezierCurve, SetCoplanar, SetNotCoplanar, SetCollinear, SetNotCollinear,
-           OBJECT_PT_greg_resolution)
+           OBJECT_OT_create_curves_collection, OBJECT_OT_create_surfaces_between_curves, OBJECT_OT_set_not_patch, PrintItemInfo,
+           OBJECT_OT_make_curve_mirror_bridge, OBJECT_OT_unset_curve_mirror_bridge, PrintDotInfo, OBJECT_PT_greg_curve_properties,
+           OBJECT_PT_greg_curve_properties1, OBJECT_PT_greg_curve_properties2, OBJECT_OT_greg_subdivide, OBJECT_OT_greg_extrude,
+           OBJECT_OT_greg_merge_at_center, OBJECT_OT_greg_merge_at_first, OBJECT_OT_greg_merge_at_last, GregMergeSub,
+           OBJECT_OT_greg_add_bezier_curve, OBJECT_OT_greg_set_coplanar, OBJECT_OT_greg_set_not_coplanar,
+           OBJECT_OT_greg_set_collinear, OBJECT_OT_greg_set_not_collinear, OBJECT_PT_greg_resolution)
 
 functions_context_menu = (add_collection_menu_func, add_surface_menu_func, set_not_face_menu_func,
                           add_print_info_func, add_bridge_mirror_func, add_unset_bridge_mirror_func,
@@ -1285,7 +1286,7 @@ def register():
     kc = wm.keyconfigs.addon
     if kc:
         km = wm.keyconfigs.addon.keymaps.new(name='3D View', space_type='VIEW_3D')
-        kmi = km.keymap_items.new(GregExtrude.bl_idname, type='E', value='PRESS', ctrl=False)
+        kmi = km.keymap_items.new(OBJECT_OT_greg_extrude.bl_idname, type='E', value='PRESS', ctrl=False)
         addon_keymaps.append((km, kmi))
 
     bpy.app.handlers.depsgraph_update_post.append(on_depsgraph_update)
