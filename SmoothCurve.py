@@ -7,8 +7,11 @@ import numpy.typing as npt
 import bpy
 import mathutils
 
-from .commons import extract_end_from_name_and_empty, extract_end_name_from_curve_and_id
+INIT_STEP = 0.3
+NUM_OF_ITERATIONS = 20
 
+from .commons import extract_end_from_name_and_empty, apply_hook, extract_vectors_from_ends
+from .commons import add_hook
 
 def get_angles(ve: mathutils.Vector) -> Tuple[float, float]:
     r = ve.length
@@ -26,8 +29,8 @@ class VecPoint:
                  handle_right: mathutils.Vector,
                  handle_left: mathutils.Vector):
         self.co = co
-        self.r1 = (handle_left - co).length
-        self.r2 = (handle_right - co).length
+        self.r1 = handle_left.length
+        self.r2 = handle_right.length
         vec = handle_right - handle_left
         self.th, self.ph = get_angles(vec)
         self.unit = self.get_unit()
@@ -141,12 +144,12 @@ def get_step(x, xnm1, dx, dxnm1):
 
 def do_steps(curve0: bpy.types.Object,
              selected: List[bpy.types.Object],
-             i: int):
-    curves = []
+             i: int,
+             direct: bool):
+    curves: List[CurveAndDirection] = []
     res: bool | None | CurveAndFreeI = True #placeholder
     last_curve = None
     curve = curve0
-    i = 1
     while res is not None and last_curve != curve0:
         res = move_forward(curve, selected, i, curves)
         if res == False:
@@ -155,11 +158,15 @@ def do_steps(curve0: bpy.types.Object,
             curve = res.curve
             last_curve = res.curve
             i = res.free_i
+            dir_this_curve = (i == 1)
+            dir_to_return = (dir_this_curve == direct)
+            curve_with_direction = CurveAndDirection(curve, dir_to_return)
+            curves.append(curve_with_direction)
     return curves
 
 def return_line_or_circle_from_selected_if_possible(selected: List[bpy.types.Object]):
     curve0 = selected[0]
-    res = do_steps(curve0, selected, 0)
+    res = do_steps(curve0, selected, 1, True)
     if res == False:
         return False
     if len(res) > 0:
@@ -167,10 +174,11 @@ def return_line_or_circle_from_selected_if_possible(selected: List[bpy.types.Obj
             cyclic = True
             return res, cyclic
     cyclic = False
-    res2 = do_steps(curve0, selected, 1)
+    res2 = do_steps(curve0, selected, 0, False)
     if res2 == False:
         return False
-    return list(chain(reversed(res2), [curve0], res)), cyclic
+    first = CurveAndDirection(curve0, True)
+    return list(chain(reversed(res2), [first], res)), cyclic
 
 
 
@@ -189,7 +197,6 @@ def move_forward(curve: bpy.types.Object,
                  list_of_curves: List[bpy.types.Object]):
     curves_neighbors = get_neighbors_with_direction(curve, selected, i)
     if len(curves_neighbors) == 1:
-        list_of_curves.append(curves_neighbors[0].curve)
         return curves_neighbors[0]
     elif len(curves_neighbors) == 0:
         return None
@@ -200,6 +207,11 @@ class CurveAndFreeI:
     def __init__(self, curve: bpy.types.Object, free_i: int):
         self.curve = curve
         self.free_i = free_i
+    
+class CurveAndDirection:
+    def __init__(self, curve: bpy.types.Object, direction: bool):
+        self.curve = curve
+        self.direction = direction
 
 def get_all_neighbour_curves(curve: bpy.types.Object,
                              empty: bpy.types.Object):
@@ -214,16 +226,44 @@ def get_selected_neighbour_curves(curve: bpy.types.Object,
     return [curve_and_free_i for curve_and_free_i in curves_neighbors
             if curve_and_free_i.curve in selected]
 
-def get_ends(curve1: bpy.types.Object, curve2: bpy.types.Object):
-    gs1 = curve1.greg_curve_settings
-    gs2 = curve2.greg_curve_settings
-    emp_ends1, emp_ends2 = (((gs.end1_empty, gs.end1_name), (gs.end2_empty, gs.end2_name)) for gs in (gs1, gs2))
-    for empty1, end_name1 in emp_ends1:
-        for empty2, end_name2 in emp_ends2:
-            if empty1 == empty2:
-                end1, end2 = (extract_end_from_name_and_empty(empty1, end_name) for end_name in (end_name1, end_name2))
-                return end1, end2
+def get_empty_and_ends(curve_and_dir1: CurveAndDirection,
+                       curve_and_dir2: CurveAndDirection):
+    gs1 = curve_and_dir1.curve.greg_curve_settings
+    empty = gs1.end2_empty if curve_and_dir1.direction else gs1.end1_empty
+    gs2 = curve_and_dir2.curve.greg_curve_settings
+    end1_name = gs1.end2_name if curve_and_dir1.direction else gs1.end1_name
+    end2_name = gs2.end1_name if curve_and_dir2.direction else gs2.end2_name
+    ends = [extract_end_from_name_and_empty(end_name, empty) for end_name in (end1_name, end2_name)]
+    return empty, ends
 
+
+
+def apply_handles_from_points_to_curves(points: List[VecPoint],
+                                        curves: List[CurveAndDirection],
+                                        is_cyclic: bool):
+    for i, point in enumerate(points):
+        curve_and_dir1 = curves[i]
+        curve_and_dir2 = curves[i + 1]
+    if is_cyclic:
+
+def apply_handles_point_two_curves(point: VecPoint,
+                                   curve1: CurveAndDirection,
+                                   curve2: CurveAndDirection):
+    handle1 = point.get_prev_co()
+    handle2 = point.get_post_co()
+    curves = (curve1, curve2)
+    splines = [curve.curve.data.splines[0] for curve in curves]
+    directions = [curve.direction for curve in curves]
+    directions[1] = not directions[1]
+    handles = (handle1, handle2)
+    for spline, dir, (h1, h2) in zip(splines, directions, (handles, reversed(handles))):
+        if dir:
+            spline.bezier_points[1].handle_left = h1
+            spline.bezier_points[1].handle_right = h2
+        else:
+            spline.bezier_points[0].handle_left = h2
+            spline.bezier_points[0].handle_right = h1
+    
 
 class smooth_curves(bpy.types.Operator):
     """Gregory: smooth curves by recalculating handles"""
@@ -250,7 +290,33 @@ class smooth_curves(bpy.types.Operator):
         selected = context.selected_objects
         line, is_cyclic = return_line_or_circle_from_selected_if_possible(selected)
         if is_cyclic:
-            for curve in line:
+            pairs_of_curves = zip(line, chain(line[1:], [line[0]]))
+            co_start = None
+            co_end = None
+        else:
+            pairs_of_curves = zip(line[:-1], line[1:])
+            first_last_curves_with_directions = (line[0], line[-1])
+            gss = (obj.curve.greg_curve_settings for obj in first_last_curves_with_directions)
+            directions = [obj.direction for obj in first_last_curves_with_directions]
+            directions[1] = not directions[1]
+            names_empties = [(gs.end1_end, gs.end1_empty) if dir else (gs.end2_end, gs.end2_empty) for gs, dir in zip(gss, directions)]
+            ends = [extract_end_from_name_and_empty(*name_and_empty) for name_and_empty in names_empties]
+            for end in ends:
+                apply_hook(end, context)
+                add_hook(end, context)
+            co_s = (name_and_empty[1].matrix_world.translation for name_and_empty in names_empties)
+            handles = extract_vectors_from_ends(ends)
+            co_start, co_end = (co + handle for co, handle in zip(co_s, handles))
+        points = []
+        for i, (curve_and_dir1, curve_and_dir2) in enumerate(pairs_of_curves):
+            empty, ends = get_empty_and_ends(curve_and_dir1, curve_and_dir2)
+            for end in ends:
+                apply_hook(end, context)
+            handles = extract_vectors_from_ends(ends)
+            co = empty.matrix_world.translation
+            points.append(VecPoint(co, handles[1], handles[0]))
+        gradient_descent_steps(points, NUM_OF_ITERATIONS, INIT_STEP, co_start, co_end)
+
 
         
         return {'FINISHED'}    
