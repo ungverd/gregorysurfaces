@@ -9,7 +9,8 @@ from .propertyGroups import GregBasicEnd, GregCurveEndItem
 TH = 0.0001
 TH2 = TH**2
 
-def apply_hook(end, context: Optional[bpy.types.Context]=None):
+def apply_hook(end: GregCurveEndItem,
+               context: Optional[bpy.types.Context]=None):
     #requires Object mode
     curve_obj = end.basic_end.curve
     if context is None:
@@ -22,7 +23,8 @@ def apply_hook(end, context: Optional[bpy.types.Context]=None):
                 bpy.ops.object.modifier_apply(modifier=hook_name)
                 return
 
-def add_hook(end, context: Optional[bpy.types.Context]=None):
+def add_hook(end: GregCurveEndItem,
+             context: Optional[bpy.types.Context]=None):
     #requires Object mode
     if context is None:
         context = bpy.context
