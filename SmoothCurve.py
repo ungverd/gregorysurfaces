@@ -240,15 +240,19 @@ def get_empty_and_ends(curve_and_dir1: CurveAndDirection,
 
 def apply_handles_from_points_to_curves(points: List[VecPoint],
                                         curves: List[CurveAndDirection],
-                                        is_cyclic: bool):
+                                        is_cyclic: bool,
+                                        context: bpy.types.context):
+    if is_cyclic:
+        curves.append(curves[0])
     for i, point in enumerate(points):
         curve_and_dir1 = curves[i]
         curve_and_dir2 = curves[i + 1]
-    if is_cyclic:
+        apply_handles_point_two_curves(point, curve_and_dir1, curve_and_dir2, context)
 
 def apply_handles_point_two_curves(point: VecPoint,
                                    curve1: CurveAndDirection,
-                                   curve2: CurveAndDirection):
+                                   curve2: CurveAndDirection,
+                                   context: bpy.types.Context):
     handle1 = point.get_prev_co()
     handle2 = point.get_post_co()
     curves = (curve1, curve2)
@@ -263,6 +267,16 @@ def apply_handles_point_two_curves(point: VecPoint,
         else:
             spline.bezier_points[0].handle_left = h2
             spline.bezier_points[0].handle_right = h1
+    for curve_and_dir, dir in zip(curves, directions):
+        gs = curve_and_dir.curve.greg_curve_settings
+        if dir:
+            empty = gs.end2_empty
+            name = gs.end2_name
+        else:
+            empty = gs.end1_empty
+            name = gs.end1_name
+        end = extract_end_from_name_and_empty(name, empty)
+        add_hook(end, context)
     
 
 class smooth_curves(bpy.types.Operator):
@@ -316,6 +330,7 @@ class smooth_curves(bpy.types.Operator):
             co = empty.matrix_world.translation
             points.append(VecPoint(co, handles[1], handles[0]))
         gradient_descent_steps(points, NUM_OF_ITERATIONS, INIT_STEP, co_start, co_end)
+        apply_handles_from_points_to_curves(points, line, is_cyclic, context)
 
 
         
