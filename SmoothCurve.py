@@ -57,7 +57,7 @@ class VecPoint:
         rel_vec = co + r*unit
         numx = rel_vec.x * np.cos(self.th) * np.cos(self.ph)
         numy = rel_vec.y * np.cos(self.th) * np.sin(self.ph)
-        numz = rel_vec.z * np.sin(self.th)
+        numz = -rel_vec.z * np.sin(self.th)
         return r * (numx + numy + numz) / rel_vec.length
     
     def get_diff_ph_term(self, r: float, co: mathutils.Vector) -> float:
