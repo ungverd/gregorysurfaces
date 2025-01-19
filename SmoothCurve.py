@@ -100,7 +100,6 @@ def get_all_angles(points: List[VecPoint]):
 
 def get_all_diffs(co_start: mathutils.Vector, co_end: mathutils.Vector, points: List[VecPoint]):
     prev = co_start
-    post = points[1].get_prev_co()
     res = []
     for i, point in enumerate(points):
         if i + 1 == len(points):
@@ -142,7 +141,7 @@ def gradient_descent_steps(points: List[VecPoint],
 
 def get_step(x, xnm1, dx, dxnm1):
     diff_d = dx - dxnm1
-    return np.dot(x - xnm1, diff_d)/np.dot(diff_d, diff_d)
+    return np.dot(x - xnm1, diff_d)/(np.dot(diff_d, diff_d) + 0.001)
 
 def do_steps(curve0: bpy.types.Object,
              selected: List[bpy.types.Object],
@@ -180,7 +179,6 @@ def return_line_or_circle_from_selected_if_possible(selected: List[bpy.types.Obj
     if res2 == False:
         return False
     first = CurveAndDirection(curve0, True)
-    print([c.curve.name for c in chain(reversed(res2), [first], res)])
     return list(chain(reversed(res2), [first], res)), cyclic
 
 
@@ -235,16 +233,6 @@ def get_empty_and_ends(curve_and_dir1: CurveAndDirection,
     gs2 = curve_and_dir2.curve.greg_curve_settings
     end1_name = gs1.end2_name if curve_and_dir1.direction else gs1.end1_name
     end2_name = gs2.end1_name if curve_and_dir2.direction else gs2.end2_name
-    print("dir1", curve_and_dir1.direction)
-    print("dir2", curve_and_dir2.direction)
-    print("empty", empty.greg_empty_settings.name)
-    print("empty ends", [end.name for end in empty.greg_empty_settings.curve_ends])
-    print("end1_1_name", gs1.end1_name)
-    print("end1_2_name", gs1.end2_name)
-    print("end2_1_name", gs2.end1_name)
-    print("end2_2_name", gs2.end2_name)
-    print("end1_name", end1_name)
-    print("end2_name", end2_name)
     ends = [extract_end_from_name_and_empty(end_name, empty) for end_name in (end1_name, end2_name)]
     return empty, ends
 
