@@ -157,6 +157,30 @@ def get_coplanar_groups_num(arrow: bpy.types.Object):
                     added[obn] = True
     return counter
 
+def set_properties_for_collinears(ends: Tuple[GregCurveEndItem, GregCurveEndItem],
+                                  common_empty: bpy.types.Object): # must be 2 ends
+    end_groups = [[end.basic_end] + list(end.collinear_to) for end in ends]
+    for first_basic_ends, second_basic_ends in zip(end_groups, reversed(end_groups)):
+        for first_basic_end in first_basic_ends:
+            not_basic_end = extract_end_from_basic_end_and_empty(first_basic_end, common_empty)
+            for second_basic_end in second_basic_ends:
+                added_basic_end = not_basic_end.collinear_to.add()
+                added_basic_end.curve = second_basic_end.curve
+                added_basic_end.end = second_basic_end.end
+                added_basic_end.name = second_basic_end.name
+    end1, end2 = ends
+    if end1.is_coplanar and end2.is_coplanar:
+        collection = get_greg_collection(common_empty)
+        #removes coplanar arrows if there's np more 3 collinear groups
+        remove_coplanar(end1, end1.name, common_empty, collection)
+
+def turn_all_collinears(first_end: GregCurveEndItem):
+    first_vec = extract_vectors_from_ends([first_end])[0]
+    for basic_end in first_end.collinear_to:
+        vec = extract_vector_from_basic_end(basic_end)
+        new_vec = vec.project(first_vec)
+        rotate_end_to_vec(new_vec, basic_end)
+
 def same_coords(c1: mathutils.Vector, c2: mathutils.Vector) -> bool:
     return (c1-c2).length_squared < TH2
 
@@ -337,10 +361,10 @@ def set_ends_collinear_to_one_another(end1: GregCurveEndItem, end2: GregCurveEnd
                         added_basic_end.end = second_basic_end.end
                         added_basic_end.name = second_basic_end.name
 
-def extract_end_from_name_and_empty(name: str, empty: bpy.types.Object):
+def extract_end_from_name_and_empty(name: str, empty: bpy.types.Object) -> GregCurveEndItem:
     return empty.greg_empty_settings.curve_ends[name]
 
-def extract_end_from_basic_end_and_empty(basic_end: GregBasicEnd, empty: bpy.types.Object) -> str:
+def extract_end_from_basic_end_and_empty(basic_end: GregBasicEnd, empty: bpy.types.Object):
     return extract_end_from_name_and_empty(basic_end.name, empty)
 
 def check_ends_coplanar(ends1, ends2, ends3, empty, collection: bpy.types.Collection):

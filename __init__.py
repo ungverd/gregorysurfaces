@@ -28,9 +28,10 @@ from .commons import apply_hook, add_hook, get_greg_collection, are_collinear
 from .commons import rotate_end_to_vec, remove_coplanar, add_curve_obj, add_empty_obj, add_curve_end
 from .commons import extract_vectors_from_ends, are_coplanar
 from .commons import add_coplanar_arrow, extract_end_from_basic_end_and_empty
-from .commons import extract_end_from_name_and_empty, extract_vector_from_basic_end
+from .commons import extract_end_from_name_and_empty
 from .commons import make_collinear, extract_end_name_from_curve_and_i
 from .commons import coplanar_collinear_add_one_end, add_one_end_to_arrow
+from .commons import set_properties_for_collinears, turn_all_collinears
 from .OnDepsgraphUpdate import on_depsgraph_update
 from .CbUpdatePatches import cb_update
 from .CreateSurfacesBetweenCurves import OBJECT_OT_create_surfaces_between_curves, add_surface_menu_func
@@ -38,6 +39,7 @@ from .MakeCurveMirrorBridge import OBJECT_OT_make_curve_mirror_bridge, add_bridg
 from .GregSubdivide import OBJECT_OT_greg_subdivide, add_greg_subdivide_func
 from .CreateCurvesCollection import OBJECT_OT_create_curves_collection, add_collection_menu_func
 from .PartialGlobalList import PartialGlobalList, PartialCurve
+from .SmoothCurve import OBJECT_OT_smooth_curves, add_smooth_curve_func
 
 
 
@@ -1061,6 +1063,7 @@ def turn_ends_to_be_coplanar(ends: List[GregCurveEndItem], vectors: List[mathuti
     for vector, end in zip(changed_vectors, ends):
         rotate_end_to_vec(vector, end.basic_end)
 
+
 class OBJECT_OT_greg_set_collinear(bpy.types.Operator):
     """Gregory: set collinear"""      # Use this as a tooltip for menu items and buttons.
     bl_idname = "object.greg_set_collinear"        # Unique identifier for bu: bpy.types.Contextttons and menu items to reference.
@@ -1099,21 +1102,9 @@ class OBJECT_OT_greg_set_collinear(bpy.types.Operator):
             basic_end = end.basic_end
             rotate_end_to_vec(vec, basic_end)
             harmonize_ends(ends, i_s, common_empty)
-        end_groups = [[end.basic_end] + list(end.collinear_to) for end in ends]
-        for first_basic_ends, second_basic_ends in zip(end_groups, reversed(end_groups)):
-            for first_basic_end in first_basic_ends:
-                not_basic_end = extract_end_from_basic_end_and_empty(first_basic_end, common_empty)
-                for second_basic_end in second_basic_ends:
-                    added_basic_end = not_basic_end.collinear_to.add()
-                    added_basic_end.curve = second_basic_end.curve
-                    added_basic_end.end = second_basic_end.end
-                    added_basic_end.name = second_basic_end.name
+        set_properties_for_collinears(ends, common_empty)
         first_end = extract_end_from_name_and_empty(end_names[0], common_empty)
-        first_vec = extract_vectors_from_ends([first_end])[0]
-        for basic_end in first_end.collinear_to:
-            vec = extract_vector_from_basic_end(basic_end)
-            new_vec = vec.project(first_vec)
-            rotate_end_to_vec(new_vec, basic_end)
+        turn_all_collinears(first_end)
         return {'FINISHED'}
 
 def harmonize_ends(ends: List[GregCurveEndItem],
@@ -1249,13 +1240,13 @@ classes = (GregId, GregArrowItem, GregBasicEnd, GregArrow, GregCurveEndItem, Gre
            OBJECT_PT_greg_curve_properties1, OBJECT_PT_greg_curve_properties2, OBJECT_OT_greg_subdivide, OBJECT_OT_greg_extrude,
            OBJECT_OT_greg_merge_at_center, OBJECT_OT_greg_merge_at_first, OBJECT_OT_greg_merge_at_last, GregMergeSub,
            OBJECT_OT_greg_add_bezier_curve, OBJECT_OT_greg_set_coplanar, OBJECT_OT_greg_set_not_coplanar,
-           OBJECT_OT_greg_set_collinear, OBJECT_OT_greg_set_not_collinear, OBJECT_PT_greg_resolution)
+           OBJECT_OT_greg_set_collinear, OBJECT_OT_greg_set_not_collinear, OBJECT_PT_greg_resolution, OBJECT_OT_smooth_curves)
 
 functions_context_menu = (add_collection_menu_func, add_surface_menu_func, set_not_face_menu_func,
                           add_print_info_func, add_bridge_mirror_func, add_unset_bridge_mirror_func,
                           add_print_dot_func, add_greg_subdivide_func, add_greg_extrude_func, add_greg_merge_func,
                           add_bezier_curve_menu_func, set_coplanar_menu_func, set_not_coplanar_menu_func,
-                          set_collinear_menu_func, set_not_collinear_menu_func)
+                          set_collinear_menu_func, set_not_collinear_menu_func, add_smooth_curve_func)
 
 def register():
     for my_class in classes:
