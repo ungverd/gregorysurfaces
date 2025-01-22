@@ -1,6 +1,8 @@
 from typing import Optional, List, Tuple
 import math
 
+import numpy as np
+
 import bpy
 import mathutils
 
@@ -594,3 +596,13 @@ def get_parent_collection(obj):
     for coll in obj.users_collection:
         if bpy.context.scene.user_of_id(coll):
             return coll
+
+def get_angles(ve: mathutils.Vector) -> Tuple[float, float]:
+    r = ve.length
+    th = np.arccos(ve.z / r)
+    xy = np.sqrt(ve.x**2 + ve.y**2)
+    if xy == 0:
+        ph = 0
+    else:
+        ph = np.sign(ve.y) * np.arccos(ve.x / xy)
+    return th, ph

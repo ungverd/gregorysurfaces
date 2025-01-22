@@ -12,30 +12,25 @@ NUM_OF_ITERATIONS = 20
 
 from .commons import extract_end_from_name_and_empty, apply_hook, extract_vectors_from_ends
 from .commons import add_hook, set_properties_for_collinears
-from .commons import turn_all_collinears
+from .commons import turn_all_collinears, get_angles
 from .propertyGroups import GregCurveEndItem
 
-def get_angles(ve: mathutils.Vector) -> Tuple[float, float]:
-    r = ve.length
-    th = np.arccos(ve.z / r)
-    xy = np.sqrt(ve.x**2 + ve.y**2)
-    if xy == 0:
-        ph = 0
-    else:
-        ph = np.sign(ve.y) * np.arccos(ve.x / xy)
-    return th, ph
 
 class VecPoint:
     def __init__(self,
                  co: mathutils.Vector,
                  handle_right: mathutils.Vector,
-                 handle_left: mathutils.Vector):
+                 handle_left: mathutils.Vector,
+                 co_prev: mathutils.Vector,
+                 co_post: mathutils.Vector):
         self.co = co
         self.r1 = handle_left.length
         self.r2 = handle_right.length
-        vec = handle_right - handle_left
+        vec = co_post - co_prev
         self.th, self.ph = get_angles(vec)
         self.unit = self.get_unit()
+        self.dist1 = (co_prev - co).length
+        self.dist2 = (co_post - co).length
     
     def set_th_ph(self, th, ph):
         self.th = th
@@ -72,7 +67,7 @@ class VecPoint:
     def get_diff_th(self, co1: mathutils.Vector, co2: mathutils.Vector) -> float:
         a = co1 - self.co
         b = co2 - self.co
-        return self.get_diff_th_term(self.r1, a) + self.get_diff_th_term(-self.r2, b)
+        return self.get_diff_th_term(self.r1, a) / self.dist1 + self.get_diff_th_term(-self.r2, b) / self.dist2
 
     def get_diff_ph(self, co1: mathutils.Vector, co2: mathutils.Vector) -> float:
         a = co1 - self.co
@@ -229,12 +224,14 @@ def get_selected_neighbour_curves(curve: bpy.types.Object,
 def get_empty_and_ends(curve_and_dir1: CurveAndDirection,
                        curve_and_dir2: CurveAndDirection):
     gs1 = curve_and_dir1.curve.greg_curve_settings
-    empty = gs1.end2_empty if curve_and_dir1.direction else gs1.end1_empty
     gs2 = curve_and_dir2.curve.greg_curve_settings
+    empty = gs1.end2_empty if curve_and_dir1.direction else gs1.end1_empty
+    empty1 = gs1.end1_empty if curve_and_dir1.direction else gs1.end2_empty
+    empty2 = gs2.end2_empty if curve_and_dir2.direction else gs2.end1_empty
     end1_name = gs1.end2_name if curve_and_dir1.direction else gs1.end1_name
     end2_name = gs2.end1_name if curve_and_dir2.direction else gs2.end2_name
     ends = [extract_end_from_name_and_empty(end_name, empty) for end_name in (end1_name, end2_name)]
-    return empty, ends
+    return empty, ends, empty1, empty2
 
 
 
@@ -329,12 +326,14 @@ class OBJECT_OT_smooth_curves(bpy.types.Operator):
             co_start, co_end = (co + handle for co, handle in zip(co_s, handles))
         points = []
         for i, (curve_and_dir1, curve_and_dir2) in enumerate(pairs_of_curves):
-            empty, ends = get_empty_and_ends(curve_and_dir1, curve_and_dir2)
+            empty, ends, p1, p2 = get_empty_and_ends(curve_and_dir1, curve_and_dir2)
             for end in ends:
                 apply_hook(end, context)
             handles = extract_vectors_from_ends(ends)
             co = empty.matrix_world.translation
-            points.append(VecPoint(co, handles[1], handles[0]))
+            co1 = p1.matrix_world.translation
+            co2 = p2.matrix_world.translation
+            points.append(VecPoint(co, handles[1], handles[0], co1, co2))
         gradient_descent_steps(points, NUM_OF_ITERATIONS, INIT_STEP, co_start, co_end)
         apply_handles_from_points_to_curves(points, line, is_cyclic, context)
         return {'FINISHED'}
