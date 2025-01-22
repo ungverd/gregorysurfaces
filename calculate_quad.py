@@ -218,7 +218,7 @@ def deriv_curv(d1s: List[mathutils.Vector],
                 dfp_db_v = dfp_db(k0, i_b)
                 dd1_db = dd1_df_v*(dfm_db_v + dfp_db_v)
                 dd2_db = dd2_dfm_v*dfm_db_v + dd2_dfp_v*dfp_db_v 
-                res[i_b*3 + xyz][i_curv] = dcurv_d1_v*dd1_db + dcurv_d2_v*dd2_db
+                res[i_curv][i_b*3 + xyz] = dcurv_d1_v*dd1_db + dcurv_d2_v*dd2_db
     return res
 
 def jacobian_step(state, jacobian, direct_res):
