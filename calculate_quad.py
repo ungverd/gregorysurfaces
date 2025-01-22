@@ -221,6 +221,9 @@ def deriv_curv(d1s: List[mathutils.Vector],
                 res[i_b*3 + xyz][i_curv] = dcurv_d1_v*dd1_db + dcurv_d2_v*dd2_db
     return res
 
+def jacobian_step(state, jacobian, direct_res):
+    new_state = state - np.linalg.inv(jacobian)@direct_res
+
 def calc_bs(ps: List[mathutils.Vector],
             ems: List[mathutils.Vector],
             eps: List[mathutils.Vector],
