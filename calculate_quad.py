@@ -136,16 +136,16 @@ def get_curv(d1: mathutils.Vector,
              d2: mathutils.Vector):
     return (d1.cross(d2)).length / (d1.length ** 3)
 
-def direct(bs: List[mathutils.Vector],
-           w2: List[mathutils.Vector],
-           w3: List[mathutils.Vector],
-           w4: List[mathutils.Vector],
-           w5: List[mathutils.Vector],
-           w6: List[mathutils.Vector],
-           ems: List[mathutils.Vector],
-           eps: List[mathutils.Vector],
-           k0s: List[float],
-           k1s: List[float]):
+def get_d1s_d2s(bs: List[mathutils.Vector],
+                w2: List[mathutils.Vector],
+                w3: List[mathutils.Vector],
+                w4: List[mathutils.Vector],
+                w5: List[mathutils.Vector],
+                w6: List[mathutils.Vector],
+                ems: List[mathutils.Vector],
+                eps: List[mathutils.Vector],
+                k0s: List[float],
+                k1s: List[float]):
     fps: List[Optional[mathutils.Vector]] = [None] * 4
     fms: List[Optional[mathutils.Vector]] = [None] * 4
     d1s: List[mathutils.Vector] = []
@@ -164,6 +164,20 @@ def direct(bs: List[mathutils.Vector],
     d2s: List[mathutils.Vector] = []
     for i in range(4):
         d2s.append(get_d2(w2, w3, w4, fms, fps, i))
+    return d1s, d2s
+    
+
+def direct(bs: List[mathutils.Vector],
+           w2: List[mathutils.Vector],
+           w3: List[mathutils.Vector],
+           w4: List[mathutils.Vector],
+           w5: List[mathutils.Vector],
+           w6: List[mathutils.Vector],
+           ems: List[mathutils.Vector],
+           eps: List[mathutils.Vector],
+           k0s: List[float],
+           k1s: List[float]):
+    d1s, d2s = get_d1s_d2s(bs, w2, w3, w4, w5, w6, ems, eps, k0s, k1s)
     ths: List[float] = []
     phs: List[float] = []
     curvs: List[float] = []
@@ -199,10 +213,8 @@ def deriv_ph(d1s: List[mathutils.Vector],):
 
 def deriv_curv(d1s: List[mathutils.Vector],
                d2s: List[mathutils.Vector],
-               k0: List[float],
-               k1: List[float],
-               dd1_dbs,
-               dd2_dbs):
+               dd1_dbs: List[float],
+               dd2_dbs: List[List[float]]):
     res: List[List[float]] = [[0]*12 for _ in range(4)]
     for i_curv in range(4):
         d1 = d1s[i_curv]
@@ -228,6 +240,12 @@ def deriv_curv(d1s: List[mathutils.Vector],
 def jacobian_step(state, jacobian, direct_res):
     new_state = state - np.linalg.inv(jacobian)@direct_res
 
+def get_coordinate_systems(starter_d1s, desired_directions):
+    coord_matrices = []
+    for i in range(4):
+        dir1 = starter_d1s[i]
+        dir2 = desired_directions[i]
+
 def calc_bs(ps: List[mathutils.Vector],
             ems: List[mathutils.Vector],
             eps: List[mathutils.Vector],
@@ -235,7 +253,8 @@ def calc_bs(ps: List[mathutils.Vector],
             cps: List[mathutils.Vector],
             bs: List[mathutils.Vector],
             desired_directions: List[mathutils.Vector], 
-            desired_curvatures: List[float]):
+            desired_curvatures: List[float]): # end directions and curvature radii
+                                              # will be average between initial and desired
     w2: List[mathutils.Vector] = []
     w3: List[mathutils.Vector] = []
     w4: List[mathutils.Vector] = []
@@ -260,4 +279,5 @@ def calc_bs(ps: List[mathutils.Vector],
         k1s.append(k1)
         w5.append(k1*b0 + 2*h0*s1 + h1*s0)
         w6.append(k0*b2 + h0*s2 + 2*h1*s1)
+    d1s, d2s = get_d1s_d2s(bs, w2, w3, w4, w5, w6, ems, eps, k0s, k1s)
     dd1_dbs, dd2_dbs = dd_db(k0s, k1s)
