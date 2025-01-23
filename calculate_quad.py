@@ -176,16 +176,22 @@ def direct(bs: List[mathutils.Vector],
 
 def dd_db(k0: List[float], k1: List[float]):
     dd1_df_v = dd1_df()
+    dd1_dbs = []
+    dd2_dbs = []
     for i_b in range(4):
         i_fm = (i_b + 1) % 4
         i_fp = i_b
         dfm_db_v = dfm_db(k1, i_b)
         dfp_db_v = dfp_db(k0, i_b)
         dd1_db = dd1_df_v*(dfm_db_v + dfp_db_v)
+        dd1_dbs.append(dd1_db)
+        dd2_dbs.append([])
         for i_curv in range(4):
             dd2_dfm_v = dd2_dfm(i_curv, i_fm)
             dd2_dfp_v = dd2_dfp(i_curv, i_fp)
-            dd2_db = dd2_dfm_v*dfm_db_v + dd2_dfp_v*dfp_db_v 
+            dd2_db = dd2_dfm_v*dfm_db_v + dd2_dfp_v*dfp_db_v
+            dd2_dbs[-1].append(dd2_db)
+    return dd1_dbs, dd2_dbs
 
 def deriv_th(d1s: List[mathutils.Vector],):
 
@@ -194,7 +200,9 @@ def deriv_ph(d1s: List[mathutils.Vector],):
 def deriv_curv(d1s: List[mathutils.Vector],
                d2s: List[mathutils.Vector],
                k0: List[float],
-               k1: List[float]):
+               k1: List[float]
+              dd1_dbs,
+              dd2_dbs):
     res: List[List[float]] = [[0]*4 for _ in range(12)]
     for i_curv in range(4):
         d1 = d1s[i_curv]
@@ -208,17 +216,12 @@ def deriv_curv(d1s: List[mathutils.Vector],
         for xyz in range(3):
             dcurv_d1_v = dcurv_d1(d1, d2, xyz, dcrossdot, d1dot, d1_denom)
             dcurv_d2_v = dcurv_d2(d1, d2, xyz, d2_denom)
-            dd1_df_v = dd1_df()
             for i_b in range(4):
-                i_fm = (i_b + 1) % 4
-                i_fp = i_b
-                dd2_dfm_v = dd2_dfm(i_curv, i_fm)
-                dd2_dfp_v = dd2_dfp(i_curv, i_fp)
-                dfm_db_v = dfm_db(k1, i_b)
-                dfp_db_v = dfp_db(k0, i_b)
-                dd1_db = dd1_df_v*(dfm_db_v + dfp_db_v)
-                dd2_db = dd2_dfm_v*dfm_db_v + dd2_dfp_v*dfp_db_v 
-                res[i_curv][i_b*3 + xyz] = dcurv_d1_v*dd1_db + dcurv_d2_v*dd2_db
+                if i_curv == i_b:
+                    dd1_db = dd1_dbs[i_b]
+                    res[i_curv][i_b*3 + xyz] = dcurv_d1_v*dd1_db + dcurv_d2_v*dd2_db
+                else:
+                    res[i_curv][i_b*3 + xyz] = dcurv_d2_v*dd2_db
     return res
 
 def jacobian_step(state, jacobian, direct_res):
