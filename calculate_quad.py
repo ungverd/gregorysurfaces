@@ -176,8 +176,8 @@ def direct(bs: List[mathutils.Vector],
 
 def dd_db(k0: List[float], k1: List[float]):
     dd1_df_v = dd1_df()
-    dd1_dbs = []
-    dd2_dbs = []
+    dd1_dbs: List[float] = []
+    dd2_dbs: List[List[float]] = []
     for i_b in range(4):
         i_fm = (i_b + 1) % 4
         i_fp = i_b
@@ -200,10 +200,10 @@ def deriv_ph(d1s: List[mathutils.Vector],):
 def deriv_curv(d1s: List[mathutils.Vector],
                d2s: List[mathutils.Vector],
                k0: List[float],
-               k1: List[float]
-              dd1_dbs,
-              dd2_dbs):
-    res: List[List[float]] = [[0]*4 for _ in range(12)]
+               k1: List[float],
+               dd1_dbs,
+               dd2_dbs):
+    res: List[List[float]] = [[0]*12 for _ in range(4)]
     for i_curv in range(4):
         d1 = d1s[i_curv]
         d2 = d2s[i_curv]
@@ -217,6 +217,7 @@ def deriv_curv(d1s: List[mathutils.Vector],
             dcurv_d1_v = dcurv_d1(d1, d2, xyz, dcrossdot, d1dot, d1_denom)
             dcurv_d2_v = dcurv_d2(d1, d2, xyz, d2_denom)
             for i_b in range(4):
+                dd2_db = dd2_dbs[i_b][i_curv]
                 if i_curv == i_b:
                     dd1_db = dd1_dbs[i_b]
                     res[i_curv][i_b*3 + xyz] = dcurv_d1_v*dd1_db + dcurv_d2_v*dd2_db
@@ -231,8 +232,9 @@ def calc_bs(ps: List[mathutils.Vector],
             ems: List[mathutils.Vector],
             eps: List[mathutils.Vector],
             cms: List[mathutils.Vector],
-            cps: List[mathutils.Vector], 
-            desired_directions: List[Tuple[float, float]], 
+            cps: List[mathutils.Vector],
+            bs: List[mathutils.Vector],
+            desired_directions: List[mathutils.Vector], 
             desired_curvatures: List[float]):
     w2: List[mathutils.Vector] = []
     w3: List[mathutils.Vector] = []
@@ -258,3 +260,4 @@ def calc_bs(ps: List[mathutils.Vector],
         k1s.append(k1)
         w5.append(k1*b0 + 2*h0*s1 + h1*s0)
         w6.append(k0*b2 + h0*s2 + 2*h1*s1)
+    dd1_dbs, dd2_dbs = dd_db(k0s, k1s)
