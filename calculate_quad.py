@@ -1,4 +1,5 @@
-from typing import List, Tuple, Optional
+from typing import List, Optional
+from itertools import chain
 
 import numpy as np
 
@@ -176,17 +177,19 @@ def direct(bs: List[mathutils.Vector],
            ems: List[mathutils.Vector],
            eps: List[mathutils.Vector],
            k0s: List[float],
-           k1s: List[float]):
+           k1s: List[float],
+           angle_matrices):
     d1s, d2s = get_d1s_d2s(bs, w2, w3, w4, w5, w6, ems, eps, k0s, k1s)
     ths: List[float] = []
     phs: List[float] = []
     curvs: List[float] = []
     for i in range[4]:
-        th, ph = get_angles(d1s[i])
+        th, ph = get_angles(angle_matrices[i] @ d1s[i])
         ths.append(th)
         phs.append(ph)
         curvs.append(get_curv(d1s[i], d2s[i]))
-    return ths, phs, curvs
+    state = np.array(list(chain(ths, phs, curvs)))
+    return d1s, d2s, state
 
 def dd_db(k0: List[float], k1: List[float]):
     dd1_df_v = dd1_df()
@@ -207,7 +210,10 @@ def dd_db(k0: List[float], k1: List[float]):
             dd2_dbs[-1].append(dd2_db)
     return dd1_dbs, dd2_dbs
 
-def deriv_th(d1s: List[mathutils.Vector],):
+def deriv_th(d1s: List[mathutils.Vector],
+             angle_matrices_T: List[mathutils.Matrix],
+             dd1_dbs: List[float]):
+    
 
 def deriv_ph(d1s: List[mathutils.Vector],):
 
@@ -235,16 +241,26 @@ def deriv_curv(d1s: List[mathutils.Vector],
                     res[i_curv][i_b*3 + xyz] = dcurv_d1_v*dd1_db + dcurv_d2_v*dd2_db
                 else:
                     res[i_curv][i_b*3 + xyz] = dcurv_d2_v*dd2_db
-    return res
+    return np.array(res)
 
 def jacobian_step(state, jacobian, direct_res):
     new_state = state - np.linalg.inv(jacobian)@direct_res
+    return new_state
 
-def get_coordinate_systems(starter_d1s, desired_directions):
-    coord_matrices = []
+def get_coordinate_systems(starter_d1s: List[mathutils.Vector],
+                           desired_directions: List[mathutils.Vector]):
+    coord_matrices: List[mathutils.Matrix] = []
     for i in range(4):
-        dir1 = starter_d1s[i]
-        dir2 = desired_directions[i]
+        dir1 = starter_d1s[i].normalized()
+        dir2 = desired_directions[i].normalized()
+        destination = dir1.slerp(dir2, 0.5).normalized()
+        x = destination.slerp(dir1, 0.5).normalized()
+        z = dir1.cross(destination).normalzed()
+        y = -x.cross(z).normalized()
+        mat = mathutils.Matrix((x, y, z))
+        coord_matrices.append(mat)
+    return coord_matrices
+
 
 def calc_bs(ps: List[mathutils.Vector],
             ems: List[mathutils.Vector],
@@ -281,3 +297,6 @@ def calc_bs(ps: List[mathutils.Vector],
         w6.append(k0*b2 + h0*s2 + 2*h1*s1)
     d1s, d2s = get_d1s_d2s(bs, w2, w3, w4, w5, w6, ems, eps, k0s, k1s)
     dd1_dbs, dd2_dbs = dd_db(k0s, k1s)
+    angle_matrices = get_coordinate_systems(d1s, desired_directions)
+    angle_matrices_T = [mat.transposed for mat in angle_matrices]
+    state = 
