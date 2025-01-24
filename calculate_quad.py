@@ -210,9 +210,35 @@ def dd_db(k0: List[float], k1: List[float]):
             dd2_dbs[-1].append(dd2_db)
     return dd1_dbs, dd2_dbs
 
+def dth_dd1(d1: mathurils.Vector):
+    x = d1.x
+    y = d1.y
+    z = d1.z
+    xysq = x**2 + y**2
+    xy = np.sqrt(xysq)
+    rsq = d1.length_squared
+    r = d1.length
+    denom = xy * rsq
+    dth_dx = x * z / denom
+    dth_dy = y * z / denom
+    dth_dz = - xy / rsq
+    return mathurils.Vector((dth_dx, dth_dy, dth_dz))
+
 def deriv_th(d1s: List[mathutils.Vector],
+             angle_matrices: List[mathutils.Matrix
              angle_matrices_T: List[mathutils.Matrix],
              dd1_dbs: List[float]):
+    res = [[0] * 12 for _ in range(4)]
+    for i in range(4):
+        d1_converted = angle_matrices[i] @ d1s[i]
+        dth_dd1_v = dth_dd1(d1_converted)
+        dth_dd1_v = angle_matrices_T[i] @ dth_dd1_v
+        dth_db = dth_dd1_v * dd1_dbs[i]
+        res[i][i * 3] = dth_db.x
+        res[i][i * 3 + 1] = dth_db.y
+        res[i][i * 3 + 2] = dth_db.z
+        
+        
     
 
 def deriv_ph(d1s: List[mathutils.Vector],):
