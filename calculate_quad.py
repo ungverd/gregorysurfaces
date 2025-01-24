@@ -178,7 +178,7 @@ def direct(bs: List[mathutils.Vector],
            eps: List[mathutils.Vector],
            k0s: List[float],
            k1s: List[float],
-           angle_matrices):
+           angle_matrices: List[mathutils.Matrix]):
     d1s, d2s = get_d1s_d2s(bs, w2, w3, w4, w5, w6, ems, eps, k0s, k1s)
     ths: List[float] = []
     phs: List[float] = []
@@ -188,8 +188,8 @@ def direct(bs: List[mathutils.Vector],
         ths.append(th)
         phs.append(ph)
         curvs.append(get_curv(d1s[i], d2s[i]))
-    state = np.array(list(chain(ths, phs, curvs)))
-    return d1s, d2s, state
+    direct_res = np.array(list(chain(ths, phs, curvs))).T
+    return d1s, d2s, direct_res
 
 def dd_db(k0: List[float], k1: List[float]):
     dd1_df_v = dd1_df()
@@ -210,38 +210,43 @@ def dd_db(k0: List[float], k1: List[float]):
             dd2_dbs[-1].append(dd2_db)
     return dd1_dbs, dd2_dbs
 
-def dth_dd1(d1: mathurils.Vector):
+def dth_ph_dd1(d1: mathutils.Vector):
     x = d1.x
     y = d1.y
     z = d1.z
     xysq = x**2 + y**2
     xy = np.sqrt(xysq)
     rsq = d1.length_squared
-    r = d1.length
     denom = xy * rsq
     dth_dx = x * z / denom
     dth_dy = y * z / denom
     dth_dz = - xy / rsq
-    return mathurils.Vector((dth_dx, dth_dy, dth_dz))
+    dph_dx = -y / xysq
+    dph_dy = x / xysq
+    dph_dz = 0
+    dth_dd1 = mathutils.Vector((dth_dx, dth_dy, dth_dz))
+    dph_dd1 = mathutils.Vector((dph_dx, dph_dy, dph_dz))
+    return dth_dd1, dph_dd1
 
-def deriv_th(d1s: List[mathutils.Vector],
-             angle_matrices: List[mathutils.Matrix
-             angle_matrices_T: List[mathutils.Matrix],
-             dd1_dbs: List[float]):
-    res = [[0] * 12 for _ in range(4)]
+def deriv_th_ph(d1s: List[mathutils.Vector],
+                angle_matrices: List[mathutils.Matrix],
+                angle_matrices_T: List[mathutils.Matrix],
+                dd1_dbs: List[float]):
+    res = [[0] * 12 for _ in range(8)]
     for i in range(4):
         d1_converted = angle_matrices[i] @ d1s[i]
-        dth_dd1_v = dth_dd1(d1_converted)
-        dth_dd1_v = angle_matrices_T[i] @ dth_dd1_v
+        dth_dd1, dph_dd1 = dth_ph_dd1(d1_converted)
+        dth_dd1_v = angle_matrices_T[i] @ dth_dd1
+        dph_dd1_v = angle_matrices_T[i] @ dph_dd1
         dth_db = dth_dd1_v * dd1_dbs[i]
+        dph_db = dph_dd1_v * dd1_dbs[i]
         res[i][i * 3] = dth_db.x
         res[i][i * 3 + 1] = dth_db.y
         res[i][i * 3 + 2] = dth_db.z
-        
-        
-    
-
-def deriv_ph(d1s: List[mathutils.Vector],):
+        res[4 + i][i * 3] = dph_db.x
+        res[4 + i][i * 3 + 1] = dph_db.y
+        res[4 + i][i * 3 + 2] = dph_db.z
+    return np.array(res)
 
 def deriv_curv(d1s: List[mathutils.Vector],
                d2s: List[mathutils.Vector],
@@ -287,15 +292,19 @@ def get_coordinate_systems(starter_d1s: List[mathutils.Vector],
         coord_matrices.append(mat)
     return coord_matrices
 
+def get_state_from_bs(bs: List[mathutils.Vector]):
+    res = list(chain((b.x, b.y, b.z) for b in bs))
+    return np.array(res).T
+
+def get_bs_from_state(state):
+    return [mathutils.Vector(state[i*3: i*3 + 3].T) for i in range(4)]
 
 def calc_bs(ps: List[mathutils.Vector],
             ems: List[mathutils.Vector],
             eps: List[mathutils.Vector],
             cms: List[mathutils.Vector],
             cps: List[mathutils.Vector],
-            bs: List[mathutils.Vector],
-            desired_directions: List[mathutils.Vector], 
-            desired_curvatures: List[float]): # end directions and curvature radii
+            desired_directions: List[mathutils.Vector]): # end directions and curvature radii
                                               # will be average between initial and desired
     w2: List[mathutils.Vector] = []
     w3: List[mathutils.Vector] = []
@@ -304,17 +313,21 @@ def calc_bs(ps: List[mathutils.Vector],
     w6: List[mathutils.Vector] = []
     k0s: List[float] = []
     k1s: List[float] = []
+    bs = []
     for i in range(4):
         w2.append(0.375*eps[i] + 0.375*ems[(i + 1) % 4] + 0.125*ps[i] + 0.125*ps[(i + 1) % 4])
         w3.append(0.125*ems[(i + 2) % 4] + 0.125*eps[(i + 3) % 4])
         w4.append(0.125*ems[i] + 0.125*eps[(i + 1) % 4])
-        b0 = cps[i] - ps[i]
-        b2 = cms[(i + 1) % 4] - ps[(i + 1) % 4]
+        b0_init = cps[i] - ps[i]
+        b2_init = cms[(i + 1) % 4] - ps[(i + 1) % 4]
         s0 = eps[i] - ps[i]
         s1 = ems[(i + 1) % 4] - eps[i]
         s2 = ps[(i + 1) % 4] - ems[(i + 1) % 4]
         a0 = ems[i] - ps[i]
         a3 = eps[(i + 1) % 4] - ps[(i + 1) % 4]
+        b0 = (b0_init - a0).normalized()
+        b2 = (b2_init - a3).normalized()
+        bs.append((b0 + b2) / 2)
         k0, h0 = get_coefs(b0, s0, a0)
         k1, h1 = get_coefs(b2, s2, a3)
         k0s.append(k0)
@@ -325,4 +338,14 @@ def calc_bs(ps: List[mathutils.Vector],
     dd1_dbs, dd2_dbs = dd_db(k0s, k1s)
     angle_matrices = get_coordinate_systems(d1s, desired_directions)
     angle_matrices_T = [mat.transposed for mat in angle_matrices]
-    state = 
+    state = get_state_from_bs(bs)
+    for i in range(10):
+        d1s, d2s, direct_res = direct(bs, w2, w3, w4, w5, w6, ems, eps, k0s, k1s, angle_matrices)
+        th_ph = deriv_th_ph(d1s, angle_matrices, angle_matrices_T, dd1_dbs)
+        curv = deriv_curv(d1s, d2s, dd1_dbs, dd2_dbs)
+        jacobian = np.vstack(th_ph, curv)
+        state = jacobian_step(state, jacobian, direct_res)
+        bs = get_bs_from_state(state)
+    return bs
+
+
