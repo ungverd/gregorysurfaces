@@ -67,8 +67,6 @@ class GregPhantomCurve(bpy.types.PropertyGroup):
     finished: bpy.props.BoolProperty(default=False)
     b1_prop: bpy.props.FloatVectorProperty()
     b2_prop: bpy.props.FloatVectorProperty()
-    b1_finished: bpy.props.BoolProperty(default=False)
-    b2_finished: bpy.props.BoolProperty(default=False)
     source_curve: bpy.props.PointerProperty(type=bpy.types.Object)
     source_curve_name: bpy.props.StringProperty(default="")
     mirrored: bpy.props.BoolProperty(default=False)
