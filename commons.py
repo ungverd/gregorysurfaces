@@ -606,3 +606,15 @@ def get_angles(ve: mathutils.Vector) -> Tuple[float, float]:
     else:
         ph = np.sign(ve.y) * np.arccos(ve.x / xy)
     return th, ph
+
+def get_coefs(e1: mathutils.Vector, e2: mathutils.Vector, x: mathutils.Vector):
+    # x = a*e1 + b*e2, we search a and b, e1 and e2 and x are coplanar, e1 and e2 are not collinear
+    e1e1 = e1.length_squared
+    e2e2 = e2.length_squared
+    e1e2 = e1.dot(e2)
+    e1x = e1.dot(x)
+    e2x = e2.dot(x)
+    coef = 1/(e1e1*e2e2 - e1e2**2)
+    a = (e2e2*e1x - e1e2*e2x) * coef
+    b = (e1e1*e2x - e1e2*e1x) * coef
+    return (a, b)
