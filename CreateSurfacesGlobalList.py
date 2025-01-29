@@ -1,4 +1,4 @@
-from typing import List, Dict, Set
+from typing import List, Dict, Set, Optional, Tuple
 from enum import Enum
 
 import numpy as np
@@ -10,7 +10,9 @@ import bmesh
 
 from .DependantsOfResolution import DependantsOfResolution_np
 from .commons import are_collinear, TH, are_coplanar, same_coords, mirror_vec, apply_hook, add_hook
-from .propertyGroups import GregPhantomCurveEnd, GregPhantomCurve
+from .commons import get_coefs
+from .propertyGroups import GregPhantomCurveEnd, GregPhantomCurve, GregQuad
+from .calculate_quad import calc_bs
 
 def calc_control_points_np(input1: List[List[mathutils.Vector]],
                             input2: List[List[mathutils.Vector]],
@@ -101,6 +103,59 @@ def calc_gregory_surf(kk: List[List[mathutils.Vector]],
     face_corner4: npt.NDArray[np.int64] = np.array([[corner4, border4[d.nedges-2], this_faces[(d.nedges-2)*(d.nedges-3)][3], border3[0]]])
     glist.faces = np.vstack((glist.faces, faces_border1, faces_border2, faces_border3, faces_border4, face_corner1, face_corner2, face_corner3, face_corner4))
 
+class TemporaryQuad:
+    def __init__(self,
+                 name: str,
+                 collection: bpy.types.Collection):
+        self.name = name
+        self.collection = collection
+        self.ps: List[Optional[mathutils.Vector]] = [None] * 4
+        self.eps: List[Optional[mathutils.Vector]] = [None] * 4
+        self.ems: List[Optional[mathutils.Vector]] = [None] * 4
+        self.curves: List[GregPhantomCurve] = []
+        self.cps: List[Optional[mathutils.Vector]] = [None] * 4
+        self.cms: List[Optional[mathutils.Vector]] = [None] * 4
+        self.edges_to_calculate: List[bool] = [False] * 4
+        self.desired_directions: List[Optional[mathutils.Vector]] = [None] * 4
+        self.dirs_to_set: List[bool] = [False] * 4
+        self.bs: List[Optional[mathutils.Vector]] = [None] * 4
+    
+    def set_curve(self,
+                  curve_i: int,
+                  curve_dir: bool,
+                  curve: GregPhantomCurve):
+        dir_to_set = (curve_dir == (curve_i in (0, 1)))
+        self.dirs_to_set[curve_i] = dir_to_set
+        control_points = CreateSurfacesGlobalList.extract_control_points(self.collection, curve)
+        if not dir_to_set:
+            control_points = list(reversed(control_points))
+        self.ps[curve_i] = control_points[0]
+        self.eps[curve_i] = control_points[1]
+        self.ems[(curve_i + 1) % 4] = control_points[2]
+        self.curves.append(curve)
+    
+    def set_cs(self,
+               bb0: mathutils.Vector,
+               bb2: mathutils.Vector,
+               i: int):
+        if i in (2, 3):
+            bb2, bb0 = bb0, bb2
+        self.cps[i] = self.ps[i] + bb0
+        self.cms[(i + 1) % 4] = self.ps[(i + 1) % 4] + bb2
+
+    def calculate_bs(self):
+        print("names:")
+        for curve in self.curves:
+            print(curve.source_curve.name)
+        if True in self.edges_to_calculate:
+            desired_directions = [dir for dir, flag in zip(self.desired_directions, self.edges_to_calculate) if flag]
+            bs = calc_bs(self.ps, self.ems, self.eps, self.cms, self.cps, self.edges_to_calculate, desired_directions)
+            counter = 0
+            for i in range(4):
+                if self.edges_to_calculate[i]:
+                    self.bs[i] = bs[counter]
+                    counter += 1
+
 class StepRes(Enum):
     FINISHED = 1
     NOT_FINISHED = 2
@@ -109,7 +164,7 @@ class StepRes(Enum):
 class CreateSurfacesGlobalList:
     def __init__(self, collection):
         self.collection = collection
-        self.quads = []
+        self.quads_dict: Dict[str, TemporaryQuad] = {}
         self.verts = None
         self.faces = None
         self.ids_counter = 0
@@ -232,6 +287,8 @@ class CreateSurfacesGlobalList:
         quad.name = "_".join(sorted(
             [phantom_curve.name for phantom_curve in curves_verified]
         ))
+        temporary_quad = TemporaryQuad(quad.name, self.collection)
+        self.quads_dict[quad.name] = temporary_quad
         for i, phantom_curve in enumerate(curves_verified):
             quad_name = phantom_curve.quads.add()
             quad_name.name = quad.name
@@ -240,16 +297,18 @@ class CreateSurfacesGlobalList:
             new_curve_item = quad.curves.add()
             new_curve_item.name = phantom_curve.name
             if i == 0:
-                quad.dirs[0] = True
+                dir = True
             elif i == 1:
-                quad.dirs[1] = (phantom_curve.bpoint1_name == curves_verified[0].bpoint2_name)
+                dir = (phantom_curve.bpoint1_name == curves_verified[0].bpoint2_name)
             elif i == 2:
                 if quad.dirs[1]:
-                    quad.dirs[2] = (phantom_curve.bpoint2_name == curves_verified[1].bpoint2_name)
+                    dir = (phantom_curve.bpoint2_name == curves_verified[1].bpoint2_name)
                 else:
-                    quad.dirs[2] = (phantom_curve.bpoint2_name == curves_verified[1].bpoint1_name)
+                    dir = (phantom_curve.bpoint2_name == curves_verified[1].bpoint1_name)
             elif i == 3:
-                quad.dirs[3] = (phantom_curve.bpoint1_name == curves_verified[0].bpoint1_name)
+                dir = (phantom_curve.bpoint1_name == curves_verified[0].bpoint1_name)
+            quad.dirs[i] = dir
+            temporary_quad.set_curve(i, dir, phantom_curve)
         return True
 
     @staticmethod
@@ -318,21 +377,21 @@ class CreateSurfacesGlobalList:
             raise ValueError("wrong i")
         return a0, a3
 
-    def calculate_coefs_along_segment(self, quad, i: int):
+    def init_coefs_calculation_along_segment(self,
+                                             quad: GregQuad,
+                                             i: int):
+        temporary_quad = self.quads_dict[quad.name]
         curve_name = quad.curves[i].name
         phantom_curve = self.collection.greg_settings.phantom_curves[curve_name]
-        quad_i = phantom_curve.quads.find(quad.name)
+        if phantom_curve.source_curve.greg_is_sharp or phantom_curve.conditional_sharp:
+            return
         a0, a3 = CreateSurfacesGlobalList.extract_a0_a3(quad, i)
         p0, p1, p2, p3 = CreateSurfacesGlobalList.get_edge_control_points_from_kk(quad, i)
         neighbour_quad = self.get_neighbour_quad(quad, i)
         if neighbour_quad is None:
-            a1, a2 = CreateSurfacesGlobalList.calculate_free_coefs(a0, a3, quad_i, phantom_curve, self.collection)
-            phantom_curve.b1_finished = True
-            phantom_curve.b2_finished = True
             phantom_curve.conditional_sharp = True
         else:
             s0 = p1 - p0
-            s1 = p2 - p1
             s2 = p3 - p2
             neighbour_i = neighbour_quad.curves.find(quad.curves[i].name)
             bb0, bb2 = CreateSurfacesGlobalList.extract_a0_a3(neighbour_quad, neighbour_i)
@@ -342,65 +401,104 @@ class CreateSurfacesGlobalList:
             b2 = (bb2 - a3).normalized()
             for v in (a0, a3, b0, b2, s0, s2):
                 if v.length < TH:
-                    a1, a2 = CreateSurfacesGlobalList.calculate_free_coefs(a0, a3, quad_i, phantom_curve, self.collection)
                     phantom_curve.conditional_sharp = True
                     break
             else:
                 if not are_coplanar(a0, b0, s0) or not are_coplanar(a3, s2, b2):
-                    a1, a2 = CreateSurfacesGlobalList.calculate_free_coefs(a0, a3, quad_i, phantom_curve, self.collection)
                     phantom_curve.conditional_sharp = True
                 elif b0.cross(s0).length < TH or b2.cross(s2).length < TH:
-                    a1, a2 = CreateSurfacesGlobalList.calculate_free_coefs(a0, a3, quad_i, phantom_curve, self.collection)
                     phantom_curve.conditional_sharp = True
                 else:
-                    k0, h0 = get_coefs(b0, s0, a0)
-                    k1, h1 = get_coefs(b2, s2, a3)
+                    temporary_quad.edges_to_calculate[i] = True
+                    temporary_quad.set_cs(bb0, bb2, i)
                     ve = self.calculate_ve(quad, i, neighbour_quad, neighbour_i)
-                    b1 = CreateSurfacesGlobalList.calculate_b1(k0, k1, h0, h1, b0, b2, s0, s1, s2, a0, a3, ve)
-                    prev_b1 = phantom_curve.b2 if quad_i == 0 else phantom_curve.b1
-                    if prev_b1 == (0,0,0):
-                        if quad_i == 0:
-                            phantom_curve.b1_prop = b1
-                        else:
-                            phantom_curve.b2_prop = b1
-                        return
-                    else:
-                        prev_b1 = mathutils.Vector(prev_b1)
-                        b1 = (b1 - prev_b1)/2
-                        if quad_i == 0:
-                            phantom_curve.b1_prop = b1
-                            phantom_curve.b2_prop = -b1
-                        else:
-                            phantom_curve.b2_prop = b1
-                            phantom_curve.b1_prop = -b1
-                        next_curve_no = CreateSurfacesGlobalList.get_curve_name_for_shear(quad,
-                                                                               i,
-                                                                               self.collection)
-                        other_curve_no = CreateSurfacesGlobalList.get_curve_name_for_shear(neighbour_quad,
-                                                                                neighbour_i,
-                                                                                self.collection)
-                        
-                        if (next_curve_no > other_curve_no) or\
-                           (next_curve_no == other_curve_no and quad_i == 1):
-                            try:
-                                phantom_curve.invert_shear[quad_i] = True
-                            except IndexError:
-                                print("quad_i", quad_i)
-                        if phantom_curve.source_curve.greg_is_sharp:
-                            a1, a2 = CreateSurfacesGlobalList.calculate_free_coefs(a0, a3, quad_i, phantom_curve, self.collection)
-                        else:
-                            b1_corrected = CreateSurfacesGlobalList.get_b1_corrected(b1, quad, i, p0, p1, p2, p3, phantom_curve, quad_i)
-                            multiply0 = 2 * k0
-                            add0 = k1 * b0 + 2 * h0 * s1 + h1 * s0
-                            multiply1 = 2 * k1
-                            add1 = k0 * b2 + h0 * s2 + 2 * h1 * s1
-                            phantom_curve.coefs_multiply[quad_i][0] = multiply0
-                            phantom_curve.coefs_add[quad_i][0] = add0
-                            phantom_curve.coefs_multiply[quad_i][1] = multiply1
-                            phantom_curve.coefs_add[quad_i][1] = add1
-                        
-                            a1 = 1/3 * (multiply0 * b1_corrected + add0)
-                            a2 = 1/3 * (multiply1 * b1_corrected + add1)
+                    temporary_quad.desired_directions[i] = -ve
+
+    @staticmethod
+    def align_bs(b1: mathutils.Vector,
+                 b2: mathutils.Vector) -> Tuple[mathutils.Vector, mathutils.Vector]:
+        length = min(b1.length, b2.length)
+        if length < TH:
+            res = (b1 - b2) / 2
+        else:
+            print(b1, b2)
+            direction = b1.normalized().slerp(-b2.normalized(), 0.5)
+            res = direction * length
+        return res, -res
+    
+    def finalise_coefs_calculation_along_segment(self,
+                                                 phantom_curve: GregPhantomCurve):
+        quad_names = []
+        quads = []
+        i_s = []
+        for quad_id in phantom_curve.quads:
+            quad_name = quad_id.name
+            quad = self.collection.greg_settings.quads[quad_name]
+            i = quad.curves.find(phantom_curve.name)
+            quad_names.append(quad_name)
+            quads.append(quad)
+            i_s.append(i)
+        if phantom_curve.source_curve.greg_is_sharp or phantom_curve.conditional_sharp:
+            for quad, i, quad_i in zip(quads, i_s, range(2)):
+                a0, a3 = CreateSurfacesGlobalList.extract_a0_a3(quad, i)
+                a1, a2 = CreateSurfacesGlobalList.calculate_free_coefs(a0, a3, quad_i, phantom_curve, self.collection)
+                CreateSurfacesGlobalList.modify_kk(quad, i, a1, a2)
+        else:
+            b1s = []
+            for quad_name, i in zip(quad_names, i_s):
+                temporary_quad = self.quads_dict[quad_name]
+                b1s.append(temporary_quad.bs[i])
+            b1, b2 = CreateSurfacesGlobalList.align_bs(b1s[0], b1s[1])
+            phantom_curve.b1_prop = b1
+            phantom_curve.b2_prop = b2
+            for quad_name, quad, i, b1, quad_i in zip(quad_names, quads, i_s, (b1, b2), range(2)):
+                a0, a3 = CreateSurfacesGlobalList.extract_a0_a3(quad, i)
+                p0, p1, p2, p3 = CreateSurfacesGlobalList.get_edge_control_points_from_kk(quad, i)
+                neighbour_quad = self.get_neighbour_quad(quad, i)
+                neighbour_i = neighbour_quad.curves.find(quad.curves[i].name)
+                s0 = p1 - p0
+                s1 = p2 - p1
+                s2 = p3 - p2
+                bb0, bb2 = CreateSurfacesGlobalList.extract_a0_a3(neighbour_quad, neighbour_i)
+                if quad.dirs[i] != neighbour_quad.dirs[neighbour_i]:
+                    bb0, bb2 = bb2, bb0
+                b0 = (bb0 - a0).normalized()
+                b2 = (bb2 - a3).normalized()
+                k0, h0 = get_coefs(b0, s0, a0)
+                k1, h1 = get_coefs(b2, s2, a3)
+                
+                next_curve_no = CreateSurfacesGlobalList.get_curve_name_for_shear(quad,
+                                                                    i,
+                                                                    self.collection)
+                other_curve_no = CreateSurfacesGlobalList.get_curve_name_for_shear(neighbour_quad,
+                                                                        neighbour_i,
+                                                                        self.collection)
+                if (next_curve_no > other_curve_no) or\
+                (next_curve_no == other_curve_no and quad_i == 1):
+                    try:
+                        phantom_curve.invert_shear[quad_i] = True
+                    except IndexError:
+                        print("quad_i", quad_i)
+                b1_corrected = CreateSurfacesGlobalList.get_b1_corrected(b1, quad, i, p0, p1, p2, p3, phantom_curve, quad_i)
+                multiply0 = 2 * k0
+                add0 = k1 * b0 + 2 * h0 * s1 + h1 * s0
+                multiply1 = 2 * k1
+                add1 = k0 * b2 + h0 * s2 + 2 * h1 * s1
+                phantom_curve.coefs_multiply[quad_i][0] = multiply0
+                phantom_curve.coefs_add[quad_i][0] = add0
+                phantom_curve.coefs_multiply[quad_i][1] = multiply1
+                phantom_curve.coefs_add[quad_i][1] = add1
+            
+                a1 = 1/3 * (multiply0 * b1_corrected + add0)
+                a2 = 1/3 * (multiply1 * b1_corrected + add1)
+                CreateSurfacesGlobalList.modify_kk(quad, i, a1, a2)
+    
+    @staticmethod
+    def modify_kk(quad: GregQuad,
+                  i: int,
+                  a1: mathutils.Vector,
+                  a2: mathutils.Vector):
+        _, p1, p2, __ = CreateSurfacesGlobalList.get_edge_control_points_from_kk(quad, i)
         if i == 0:
             quad.kk[1][1] = a1 + p1
             quad.kk[1][2] = a2 + p2
@@ -413,11 +511,7 @@ class CreateSurfacesGlobalList:
         elif i == 3:
             quad.kk1[0][0] = a1 + p1
             quad.kk1[1][0] = a2 + p2
-        if quad_i == 0:
-            phantom_curve.b1_finished = True
-        else:
-            phantom_curve.b2_finished = True
-    
+
     @staticmethod
     def get_b1_corrected(b1, quad, i, p0, p1, p2, p3, phantom_curve, quad_i):
         bulge = b1.normalized()
@@ -459,18 +553,7 @@ class CreateSurfacesGlobalList:
             add1 = mathutils.Vector(phantom_curve.coefs_add[quad_i][1])
             a1 = 1/3 * (multiply0 * b1_corrected + add0)
             a2 = 1/3 * (multiply1 * b1_corrected + add1)
-        if i == 0:
-            quad.kk[1][1] = a1 + p1
-            quad.kk[1][2] = a2 + p2
-        elif i == 1:
-            quad.kk1[0][1] = a1 + p1
-            quad.kk1[1][1] = a2 + p2
-        elif i == 2:
-            quad.kk[2][1] = a1 + p1
-            quad.kk[2][2] = a2 + p2
-        elif i == 3:
-            quad.kk1[0][0] = a1 + p1
-            quad.kk1[1][0] = a2 + p2
+        CreateSurfacesGlobalList.modify_kk(quad, i, a1, a2)
 
     @staticmethod
     def get_curve_name_for_shear(quad, i, collection):
@@ -528,50 +611,18 @@ class CreateSurfacesGlobalList:
         ve = p2 - p1
         return ve
 
-    @staticmethod
-    def calculate_b1(k0: float,
-                     k1: float,
-                     h0: float,
-                     h1: float,
-                     b0: mathutils.Vector,
-                     b2: mathutils.Vector,
-                     s0: mathutils.Vector,
-                     s1: mathutils.Vector,
-                     s2: mathutils.Vector,
-                     a0: mathutils.Vector,
-                     a3: mathutils.Vector,
-                     ve: mathutils.Vector):
-        b1_ref = (b0 + b2) / 2
-        return b1_ref # * 3
-        #a1_ref = (a0.length + a3.length) / 2
-        #ve = ve.normalized() * a1_ref
-        '''ve = ve * 0.5
-        res = (-8/3*ve - a0 - k1*b0 - 2*h0*s1 - h1*s0 - k0*b2 - h0*s2 - 2*h1*s1 - a3) / (2*(k0 + k1))
-                    #res = res * (b0_ref.length_squared / res.dot(b0_ref))
-        return (res + b1_ref) * 0.7'''
-        #self.b1 = res
-
-    def calculate_remaining_kk(self):
-        for phantom_curve in self.collection.greg_settings.phantom_curves:
-            if len(phantom_curve.quads) > 0:
-                if phantom_curve.b1_finished == False:
-                    quad_name = phantom_curve.quads[0].name
-                    quad = self.collection.greg_settings.quads[quad_name]
-                    quad_i = quad.curves.find(phantom_curve.name)
-                    self.calculate_coefs_along_segment(quad, quad_i)
-                if phantom_curve.b2_finished == False:
-                    quad_name = phantom_curve.quads[1].name
-                    quad = self.collection.greg_settings.quads[quad_name]
-                    quad_i = quad.curves.find(phantom_curve.name)
-                    self.calculate_coefs_along_segment(quad, quad_i)
 
     def calculate_kk(self):
         for quad in self.collection.greg_settings.quads:
             self.calculate_coefs(quad)
         for quad in self.collection.greg_settings.quads:
             for i in range(4):
-                self.calculate_coefs_along_segment(quad, i)
-        self.calculate_remaining_kk()
+                self.init_coefs_calculation_along_segment(quad, i)
+        for temporal_quad in self.quads_dict.values():
+            temporal_quad.calculate_bs()
+        for phantom_curve in self.collection.greg_settings.phantom_curves:
+            if len(phantom_curve.quads) > 0:
+                self.finalise_coefs_calculation_along_segment(phantom_curve)
 
     def add_curves_and_bpoints(self):
         for curve_item in self.collection.greg_settings.curves:
@@ -789,15 +840,3 @@ def get_not_face_ids(curve_obj: bpy.types.Object) -> List[Set[str]]:
             not_face_ids = set([obj.greg_curve_settings.name for obj in col.objects])
             not_face_ids_groups.append(not_face_ids)
     return not_face_ids_groups
-
-def get_coefs(e1: mathutils.Vector, e2: mathutils.Vector, x: mathutils.Vector):
-    # x = a*e1 + b*e2, we search a and b, e1 and e2 and x are coplanar, e1 and e2 are not collinear
-    e1e1 = e1.length_squared
-    e2e2 = e2.length_squared
-    e1e2 = e1.dot(e2)
-    e1x = e1.dot(x)
-    e2x = e2.dot(x)
-    coef = 1/(e1e1*e2e2 - e1e2**2)
-    a = (e2e2*e1x - e1e2*e2x) * coef
-    b = (e1e1*e2x - e1e2*e1x) * coef
-    return (a, b)

@@ -1,37 +1,13 @@
 from typing import List, Optional
 from itertools import chain
+import math
 
 import numpy as np
 import numpy.typing as npt
 
 import mathutils
 
-from .commons import get_angles
-
-'''# to delete
-def get_angles(ve: mathutils.Vector) -> Tuple[float, float]:
-    r = ve.length
-    th = np.arccos(ve.z / r)
-    xy = np.sqrt(ve.x**2 + ve.y**2)
-    if xy == 0:
-        ph = 0
-    else:
-        ph = np.sign(ve.y) * np.arccos(ve.x / xy)
-    return th, ph
-
-#######'''
-
-def get_coefs(e1: mathutils.Vector, e2: mathutils.Vector, x: mathutils.Vector):
-    # x = a*e1 + b*e2, we search a and b, e1 and e2 and x are coplanar, e1 and e2 are not collinear
-    e1e1 = e1.length_squared
-    e2e2 = e2.length_squared
-    e1e2 = e1.dot(e2)
-    e1x = e1.dot(x)
-    e2x = e2.dot(x)
-    coef = 1/(e1e1*e2e2 - e1e2**2)
-    a = (e2e2*e1x - e1e2*e2x) * coef
-    b = (e1e1*e2x - e1e2*e1x) * coef
-    return (a, b)
+from .commons import get_angles, get_coefs
 
 def get_d1(f0p: mathutils.Vector,
            f1m: mathutils.Vector,
@@ -118,7 +94,11 @@ def dcurv_d1(d1: mathutils.Vector,
     d2x = d2[x]
     d2y = d2[y]
     d2z = d2[z]
-
+    ##print("d1_denom", d1_denom)
+    if d1_denom > 10**25:
+        #print("here!")
+        return 0
+    ##print("numer", (-3*d1x*dcrossdot + (d2y*(d1x*d2y - d1y*d2x) + d2z*(d1x*d2z - d1z*d2x))*d1dot))
     return (-3*d1x*dcrossdot + (d2y*(d1x*d2y - d1y*d2x) + d2z*(d1x*d2z - d1z*d2x))*d1dot) / d1_denom
 
 def dcurv_d2(d1: mathutils.Vector,
@@ -202,10 +182,14 @@ def direct(bs: List[mathutils.Vector],
     curvs: List[float] = []
     for i in range(len(d1s)):
         th, ph = get_angles(angle_matrices[i] @ d1s[i])
+        #print("converted_d1", angle_matrices[i] @ d1s[i])
+        #print("th", th)
+        #print("ph", ph)
         ths.append(th)
         phs.append(ph)
+        print("curv", get_curv(d1s[i], d2s[i]))
         curvs.append(get_curv(d1s[i], d2s[i]))
-    direct_res = np.array(list(chain(ths, phs, curvs))).T - ideal_res
+    direct_res = np.array([list(chain(ths, phs, curvs))]).T - ideal_res
     return d1s, d2s, direct_res
 
 def dd_db(k0: List[float],
@@ -241,6 +225,8 @@ def dth_ph_dd1(d1: mathutils.Vector):
     xy = np.sqrt(xysq)
     rsq = d1.length_squared
     denom = xy * rsq
+    '''if denom == 0:
+        denom = 0.0001'''
     dth_dx = x * z / denom
     dth_dy = y * z / denom
     dth_dz = - xy / rsq
@@ -281,12 +267,17 @@ def deriv_curv(d1s: List[mathutils.Vector],
     for i_curv in range(number_of_bs):
         d1 = d1s[i_curv]
         d2 = d2s[i_curv]
+        ##print("d1", d1, "d2", d2)
         dcross = d1.cross(d2)
         dcrossdot = dcross.dot(dcross)
         d1dot = d1.dot(d1)
         sqrt_dcrossdot = np.sqrt(dcrossdot)
         d1_denom = (d1dot**(5/2) * sqrt_dcrossdot)
+        '''if d1_denom == 0:
+            d1_denom = 0.0001'''
         d2_denom = (d1dot**(3/2) * sqrt_dcrossdot)
+        '''if d2_denom == 0:
+            d2_denom = 0.0001'''
         for xyz in range(3):
             dcurv_d1_v = dcurv_d1(d1, d2, xyz, dcrossdot, d1dot, d1_denom)
             dcurv_d2_v = dcurv_d2(d1, d2, xyz, d2_denom)
@@ -323,8 +314,11 @@ def get_coordinate_systems(starter_d1s: List[mathutils.Vector],
             y = -x.cross(z).normalized()
             mat = mathutils.Matrix((x, y, z))
             coord_matrices.append(mat)
+            #print("mat @ destination", mat @ destination)
+            #print("mat @ starter_d1", mat @ starter_d1s[j])
+            #print("mat @ dir1", mat @ dir1)
             th_ideal, ph_ideal = get_angles(mat @ destination)
-            print("th_ideal, ph_ideal", i, th_ideal, ph_ideal)
+            #print("th_ideal, ph_ideal", i, th_ideal, ph_ideal)
             ths_ideal.append(th_ideal)
             phs_ideal.append(ph_ideal)
     return coord_matrices, ths_ideal, phs_ideal
@@ -335,7 +329,8 @@ def get_state_from_bs(bs: List[mathutils.Vector]):
 
 def get_bs_from_state(state: npt.NDArray):
     len_bs = len(state) // 3
-    return [mathutils.Vector(state[i*3: i*3 + 3].T) for i in range(len_bs)]
+    assert True not in np.isnan(state)
+    return [mathutils.Vector(state[i*3: i*3 + 3].T[0]) for i in range(len_bs)]
 
 def calc_curv_bezier(p0: mathutils.Vector,
                      p1: mathutils.Vector,
@@ -357,12 +352,15 @@ def calc_desired_curvature(ps: List[mathutils.Vector],
     p1 = eps[(i + 1) % 4]
     p2 = ems[(i + 2) % 4]
     curv2 = calc_curv_bezier(p0, p1, p2)
-    return (curv1 + curv2) / 2
+    #print("desired_curvatures", i, curv1, curv2, (curv1 + curv2) / 2)
+    #return (curv1 + curv2) / 2
+    return 2*curv1*curv2 / (curv1 + curv2)
 
 def calc_ideal_curvatires(desired_curvatures: List[float],
                           d1s: List[mathutils.Vector],
                           d2s: List[mathutils.Vector]) -> List[float]:
     now_curvs = [get_curv(d1, d2) for d1, d2 in zip(d1s, d2s)]
+    print("actual_curvatures", now_curvs)
     return [min(nc, (dc + nc) / 2) for dc, nc in zip(desired_curvatures, now_curvs)]
     #return [(dc + nc) / 2 for dc, nc in zip(desired_curvatures, now_curvs)]
 
@@ -375,6 +373,13 @@ def calc_bs(ps: List[mathutils.Vector],
             edges_to_calculate: List[bool],
             desired_directions: List[mathutils.Vector]): # end directions and curvature radii
                                               # will be average between initial and desired
+    #print("desired_directions", desired_directions)
+    print("ps =", ps)
+    print("eps =", eps)
+    print("ems =", ems)
+    print("cps =", cps)
+    print("cms =", cms)
+    print("edges_to_calculate =", edges_to_calculate)
     w2: List[mathutils.Vector] = []
     w3: List[mathutils.Vector] = []
     w4: List[mathutils.Vector] = []
@@ -413,29 +418,92 @@ def calc_bs(ps: List[mathutils.Vector],
         else:
             fps_predefined[i] = eps[i] + (a0*2 + a3) / 3
             fms_predefined[(i + 1) % 4] = ems[(i + 1) % 4] + (a0 + a3*2) / 3
+    initial_bs = [b.copy() for b in bs]
+    #print("initial_bs", initial_bs)
     d1s, d2s = get_d1s_d2s(bs, fps_predefined, fms_predefined, js, edges_to_calculate, w2, w3, w4, w5, w6, ems, eps, k0s, k1s)
+    #print("initial_d1s", d1s)
     dd1_dbs, dd2_dbs = dd_db(k0s, k1s, js, edges_to_calculate)
     angle_matrices, ths_ideal, phs_ideal = get_coordinate_systems(d1s, desired_directions, js, edges_to_calculate)
     desired_curvatires = [calc_desired_curvature(ps, ems, eps, i) for i in range(4) if edges_to_calculate[i]]
-    print("desired_curvatires", desired_curvatires)
+    #print("desired_curvatires", desired_curvatires)
     ideal_curvatures = calc_ideal_curvatires(desired_curvatires, d1s, d2s)
     print("ideal_curvatires", ideal_curvatures)
-    ideal_res = np.array(list(chain(ths_ideal, phs_ideal, ideal_curvatures))).T
+    ideal_res = np.array([list(chain(ths_ideal, phs_ideal, ideal_curvatures))]).T
+    curvatures_to_compare = ideal_res[len(bs)*2:] * 0.1
+    vec_to_compare = np.vstack([np.array([[0.1]])] * (len(bs)*2) + [curvatures_to_compare])
     angle_matrices_T = [mat.transposed() for mat in angle_matrices]
     state = get_state_from_bs(bs)
-    for i in range(20):
+    try:
         d1s, d2s, direct_res = direct(bs, w2, w3, w4, w5, w6, ems, eps, k0s, k1s,
-                                      angle_matrices, ideal_res, js, edges_to_calculate, fps_predefined, fms_predefined)
-        jac_th_ph = deriv_th_ph(d1s, angle_matrices, angle_matrices_T, dd1_dbs)
-        jac_curv = deriv_curv(d1s, d2s, dd1_dbs, dd2_dbs)
-        print("direct_res", direct_res)
-        jacobian = np.vstack([jac_th_ph, jac_curv])
-        state = jacobian_step(state, jacobian, direct_res)
-        bs = get_bs_from_state(state)
-    return bs
+                                        angle_matrices, ideal_res, js, edges_to_calculate, fps_predefined, fms_predefined)
+        print("initial", "direct_res", direct_res)
+        vec_diffs = np.abs(direct_res)
+        if not False in (vec_diffs < vec_to_compare):
+            print("ok!!!")
+            return bs
+        for i in range(20):
+            jac_th_ph = deriv_th_ph(d1s, angle_matrices, angle_matrices_T, dd1_dbs)
+            jac_curv = deriv_curv(d1s, d2s, dd1_dbs, dd2_dbs)
+            jacobian = np.vstack([jac_th_ph, jac_curv])
+            state = jacobian_step(state, jacobian, direct_res)
+            bs = get_bs_from_state(state)
+            '''verify_jacobian(bs, w2, w3, w4, w5, w6, ems, eps, k0s, k1s,
+                    angle_matrices, ideal_res, js, edges_to_calculate, fps_predefined, fms_predefined,
+                    angle_matrices_T, dd1_dbs, dd2_dbs)'''
+            d1s, d2s, direct_res = direct(bs, w2, w3, w4, w5, w6, ems, eps, k0s, k1s,
+                                        angle_matrices, ideal_res, js, edges_to_calculate, fps_predefined, fms_predefined)
+            print(i, "direct_res", direct_res)
+            vec_diffs = np.abs(direct_res)
+            if not False in (vec_diffs < vec_to_compare):
+                print("initial_bs", initial_bs)
+                print("bs", bs)
+                for b, initial_b in zip(bs, initial_bs):
+                    l1 = b.length
+                    l2 = initial_b.length
+                    if l1/l2 > 5 or l2/l1 > 5:
+                        print("bs changed too much!!!")
+                        return initial_bs
+                print("ok!!!")
+                return bs
+        print("not here...")
+        return initial_bs
+        #print("ok!!!", bs)
+        #direct(bs, w2, w3, w4, w5, w6, ems, eps, k0s, k1s,
+        #                                angle_matrices, ideal_res, js, edges_to_calculate, fps_predefined, fms_predefined)
+        #print("******************")
+        #return bs
+    except Exception as e:
+        print(e)
+        print("not here...")
+        return initial_bs
 
 ################
 # test
+
+def verify_jacobian(bs, w2, w3, w4, w5, w6, ems, eps, k0s, k1s,
+                    angle_matrices, ideal_res, js, edges_to_calculate, fps_predefined, fms_predefined,
+                    angle_matrices_T, dd1_dbs, dd2_dbs):
+    d1s, d2s, direct_res = direct(bs, w2, w3, w4, w5, w6, ems, eps, k0s, k1s,
+                                        angle_matrices, ideal_res, js, edges_to_calculate, fps_predefined, fms_predefined)
+    directs = []
+    for i in range(len(bs)):
+        for xyz in range(3):
+            bs_copy = [b.copy() for b in bs]
+            bs_copy[i][xyz] += 0.00001
+            _, __, direct_res1 = direct(bs_copy, w2, w3, w4, w5, w6, ems, eps, k0s, k1s,
+                                        angle_matrices, ideal_res, js, edges_to_calculate, fps_predefined, fms_predefined)
+            directs.append((direct_res1 - direct_res) / 0.00001)
+            #print((direct_res1 - direct_res) / 0.0001)
+    ddd = np.hstack(directs)
+
+    jac_th_ph = deriv_th_ph(d1s, angle_matrices, angle_matrices_T, dd1_dbs)
+    jac_curv = deriv_curv(d1s, d2s, dd1_dbs, dd2_dbs)
+    #print("direct_res", direct_res)
+    jacobian = np.vstack([jac_th_ph, jac_curv])
+    print("jacobian", jacobian)
+    print("must be near zeros", ddd - jacobian)
+
+
 def test():
     def get_e0_e1(p0, p1):
         up = mathutils.Vector((0,0,1/3))
@@ -444,7 +512,7 @@ def test():
         return ep, em
 
     ps = [mathutils.Vector((i, j, 0)) for i , j in zip((0,0,1,1), (0,1,1,0))]
-    print("ps", ps)
+    #print("ps", ps)
     eps = [None] * 4
     ems = [None] * 4
     for i in range(4):
@@ -454,7 +522,7 @@ def test():
         eps[i] = ep
         ems[(i + 1) % 4] = em
     cs = [2*p - (ep + em) / 2 for p, ep, em in zip(ps, eps, ems)]
-    print("cs", cs)
+    #print("cs", cs)
     cps = [None] + cs[1:]
     cms = [cs[0]] + [None] + cs[2:]
     desired_directions = [mathutils.Vector((0,0,1))] * 3
